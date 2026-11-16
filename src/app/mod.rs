@@ -13,6 +13,7 @@ use crate::app::session::PersistedSpecialTab;
 use crate::app::session::PersistedSpecialTabKind;
 use crate::app::session::PersistedTab;
 use crate::app::session::SessionState;
+use crate::app::session::next_tab_id;
 use crate::app::tabs::TabContent;
 use crate::app::tabs::TabSlot;
 use crate::app::tabs::TabState;
@@ -298,11 +299,22 @@ impl DegenViewApp {
             )
         };
 
+        // Rows a newer version wrote stay in the table untouched; see `UnknownTab`.
+        let (kept, saved_tabs): (Vec<_>, Vec<_>) = saved_tabs
+            .into_iter()
+            .partition(|tab| matches!(tab, PersistedTab::Unknown(_)));
+        let next_id = next_tab_id(saved_next_id, &kept);
+
         let (slots, next_id) = if saved_tabs.is_empty() {
+            let (first_id, next_id) = if kept.iter().any(|tab| tab.id() == 1) {
+                (next_id, next_id + 1)
+            } else {
+                (1, next_id)
+            };
             (
                 vec![TabSlot::new(TabContent::Chart(Box::new(
                     ChartWorkspace::empty(
-                        1,
+                        first_id,
                         Timeframe::Day,
                         Arc::clone(&watchlist),
                         quote_book.clone(),
@@ -310,7 +322,7 @@ impl DegenViewApp {
                         store.clone(),
                     ),
                 )))],
-                2,
+                next_id,
             )
         } else {
             let mut has_portfolio = false;
@@ -347,10 +359,10 @@ impl DegenViewApp {
                             store.clone(),
                         )))))
                     }
-                    PersistedTab::Special(_) => None,
+                    PersistedTab::Special(_) | PersistedTab::Unknown(_) => None,
                 })
                 .collect();
-            (tabs, saved_next_id.max(2))
+            (tabs, next_id)
         };
 
         let first_window = Placement::for_work_area(native_bridge::main_work_area().map(
@@ -382,7 +394,7 @@ impl DegenViewApp {
             script_signature: 0,
             notifier,
             actions,
-            session: SessionState::new(),
+            session: SessionState::new(kept),
             root_hidden: false,
         }
     }

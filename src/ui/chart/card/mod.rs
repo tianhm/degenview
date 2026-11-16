@@ -35,7 +35,7 @@ use crate::ui::drawing::layer::{DrawingFrame, DrawingLayer, Projection, TextMeas
 use crate::ui::drawing::render::TimeIndex;
 use crate::ui::icons::{self, Icon};
 use crate::ui::paper::chart_trading::{self, PaperCardState};
-use crate::ui::pine::chart_render::{self, CandleStyle, HoverTarget, PineLayer};
+use crate::ui::pine::chart_render::{self, HoverTarget, PineLayer};
 use crate::ui::pine::geometry::{OverlayExtent, overlay_extent};
 use crate::ui::replay::overlay::{self, ReplayChartFrame};
 use crate::ui::theme;
@@ -85,11 +85,6 @@ fn visible_price_move(
     (amount.is_finite() && percent.is_finite()).then_some((amount, percent))
 }
 
-/// Half the width of a candle body, matching the real candles the Pine overlay recolours.
-fn candle_body_half_width(slot_width: f32) -> f32 {
-    (slot_width * 0.34).clamp(1.0, 8.0)
-}
-
 /// Signals a chart card emits while it is being drawn. The owning workspace
 /// applies them after the frame, so rendering never mutates layout mid-pass.
 #[derive(Clone, Debug, Default)]
@@ -113,15 +108,20 @@ pub struct WatchlistMembership {
     pub contains_market: bool,
 }
 
-/// The shared crosshair a tab draws across all its charts. Stored as a fraction
-/// of plot width so the same column lines up on every card.
+/// The shared crosshair a tab draws across all its charts: the owner follows the pointer, every
+/// other chart puts its column at the same instant, whatever its zoom or bars.
 #[derive(Clone, Copy, Debug)]
 pub struct CrosshairInfo {
     /// The pointer is on the overlay card, not the plot: the bar stays where it was and only the
     /// readouts are drawn (no lines, no tags).
     pub frozen: bool,
     pub owner_id: u64,
+    /// Where the pointer is on the owner's plot, as a share of its width. Only the owner reads
+    /// it: another chart's plot has other bars under that share.
     pub x_fraction: f64,
+    /// The time (ms) under the pointer, when the owner's slots have one. A price-based chart's
+    /// do not, and then no other chart has a column to draw.
+    pub time: Option<f64>,
     pub price: f64,
 }
 
@@ -131,10 +131,11 @@ use live_overlays::LiveOverlays;
 use price_scale::tick_step;
 pub(in crate::ui) use price_scale::{AxisTicks, PriceScale};
 use scripts::{draw_script_pane, pane_labels};
-pub use snapshot::{SnapshotError, SnapshotInput};
+pub use snapshot::{FrozenOutputs, SnapshotError, SnapshotFrame, SnapshotGeometry, SnapshotInput};
 #[cfg(test)]
 use view::Probe;
-use view::View;
+pub use view::ViewGeometry;
+use view::{Framing, View};
 
 /// What a chart reports back while drawing, plus whether its plot was clicked.
 #[derive(Clone, Debug, Default)]
@@ -143,6 +144,8 @@ pub struct ChartPointer {
     pub context: Option<ContextRequest>,
     pub clicked: bool,
     pub hover_x_fraction: Option<f64>,
+    /// The time (ms) under the pointer, on a chart whose slots are time.
+    pub hover_time: Option<f64>,
     pub hover_price: Option<f64>,
     /// The time and price under the pointer, through the chart's own projection.
     pub hover_anchor: Option<Anchor>,
@@ -258,8 +261,12 @@ impl SeriesLine {
 
 pub struct ChartCard {
     appearance: ChartAppearance,
-    /// How big the plot area was drawn at the last frame, in points: what a snapshot is the size of.
-    body_size: Vec2,
+    /// Where the plot area was drawn at the last frame, in window points: what a snapshot is the
+    /// size of, and what Select portion maps a selection from.
+    body_rect: Rect,
+    /// How wide the price axis was at the last frame, in points (0 while no plot is drawn): the
+    /// header, drawn after the body over the plot, keeps its trade pills left of the axis.
+    axis_width: f32,
     /// How much of the plot's top the header covers: the price scale starts below it, and what
     /// anchors to the plot's top (readouts, tags) sits under it. A snapshot has no header.
     top_inset: f32,
@@ -332,6 +339,9 @@ pub struct ChartCard {
     /// The Zoom In tool: armed state, the rectangle being dragged, the views to zoom out to.
     /// View state, never saved.
     zoom: zoom_rect::ZoomTool,
+    /// The workspace's Select portion mode is on: the pointer is the selection's, not the
+    /// chart's. View state, never saved.
+    snapshot_select: bool,
     /// Bars that arrived at the newest end since this card began, whatever the view showed: what a
     /// stored view is translated by (see [`zoom_rect::ViewStep`]).
     arrivals: u64,
@@ -383,7 +393,8 @@ impl Default for ChartCard {
     fn default() -> Self {
         Self {
             appearance: ChartAppearance::default(),
-            body_size: Vec2::ZERO,
+            body_rect: Rect::ZERO,
+            axis_width: 0.0,
             top_inset: 0.0,
             title: None,
             series: Vec::new(),
@@ -415,6 +426,7 @@ impl Default for ChartCard {
             logs_range: None,
             scroll_from: None,
             zoom: zoom_rect::ZoomTool::default(),
+            snapshot_select: false,
             arrivals: 0,
             series_epoch: 0,
             drawn_series: None,
@@ -502,8 +514,12 @@ impl ChartCard {
     /// The slots past the newest bar the plot keeps free: the right margin, or more where an
     /// overlay script draws further.
     fn reserved_slots(&self) -> usize {
-        usize::from(self.appearance.canvas.margins.sanitized().right)
-            .max(self.script_extent.future_bars)
+        self.reserved_slots_with(&self.script_extent)
+    }
+
+    /// [`Self::reserved_slots`] for scripts that reach as far as `extent`.
+    fn reserved_slots_with(&self, extent: &OverlayExtent) -> usize {
+        usize::from(self.appearance.canvas.margins.sanitized().right).max(extent.future_bars)
     }
 
     pub fn chart_style_mut(&mut self) -> &mut ChartStyle {
@@ -652,10 +668,27 @@ impl ChartCard {
             opaque_rgba(self.appearance.bullish),
             opaque_rgba(self.appearance.bearish),
         );
+        let (up, down) = self.drawn_style().up_down(base);
+        (series::color(up), series::color(down))
+    }
+
+    /// The appearance's style with the type the chart is drawing.
+    fn drawn_style(&self) -> ChartStyle {
         let mut style = self.appearance.style;
         style.chart_type = self.drawn_type;
-        let (up, down) = style.up_down(base);
-        (series::color(up), series::color(down))
+        style
+    }
+
+    /// The colour the drawn type gives `bar`: the up or down colour by the reference it colours
+    /// from (the previous close, or the open), the same call the candle itself is painted by.
+    fn bar_color(&self, bar: &Kline, previous_close: Option<f64>) -> Color32 {
+        let (up, down) = self.up_down_colors();
+        let by_previous_close = self.drawn_style().colors_by_previous_close();
+        if chart::look::is_rising(bar, previous_close, by_previous_close) {
+            up
+        } else {
+            down
+        }
     }
 
     fn bullish_color(&self) -> Color32 {
@@ -739,6 +772,7 @@ mod paint;
 mod price_scale;
 mod scripts;
 mod snapshot;
+mod snapshot_select;
 mod sync;
 mod table;
 mod view;
@@ -754,7 +788,11 @@ mod canvas_tests;
 mod overlay_tests;
 
 #[cfg(test)]
+mod snapshot_override_tests;
+#[cfg(test)]
 mod snapshot_tests;
+#[cfg(test)]
+pub(in crate::ui) mod studio_fixture;
 
 #[cfg(test)]
 mod navigation_tests;

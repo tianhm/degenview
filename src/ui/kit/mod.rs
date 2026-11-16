@@ -26,6 +26,7 @@ mod page;
 mod palette;
 mod pill;
 pub mod popover;
+pub mod ruler;
 pub mod sheet;
 pub mod source_logo;
 pub mod sparkline;
@@ -38,15 +39,15 @@ pub mod time_text;
 pub use autosave::Autosave;
 pub use button::{
     FooterButton, cta_button, destructive_button, destructive_sheet_button, footer_button,
-    hover_button, large_button, large_prominent_button, open_button, push_button, sheet_button,
-    tinted_button,
+    hover_button, large_button, large_prominent_button, neutral_button, open_button, push_button,
+    sheet_button, tinted_button,
 };
 pub use card::{CARD_RADIUS, card_frame, divider, paint_card_badge, paint_well, panel_divider};
-pub use confirm::{Alert, Confirm, ConfirmOutcome, Notice, alert, confirm, notice};
+pub use confirm::{Alert, Confirm, ConfirmOutcome, Notice, alert, confirm, notice, notice_with};
 pub use field::{FIELD_HEIGHT, field, field_frame, input_frame, plain_field, search_field};
 pub use form::{
-    StepDirection, color_well, paint_switch, segmented, segmented_filling, stepper, stepper_arrows,
-    switch,
+    Segment, StepDirection, color_well, paint_switch, segmented, segmented_filling, segments,
+    segments_width, stepper, stepper_arrows, switch,
 };
 pub(crate) use menu::{MENU_FRAME_MARGIN, MENU_MAX_HEIGHT, menu_width_for, menu_width_for_rows};
 pub use menu::{
@@ -63,10 +64,10 @@ pub use pill::{
 };
 pub use tab_bar::{TabItem, tab_bar, tab_bar_regular, tab_bar_regular_width, tab_bar_slim};
 pub use text::{
-    BOLD, MEDIUM, REGULAR, SEMIBOLD, digits, galley, galley_rows, galley_words, paragraph, size,
-    text,
+    BOLD, MEDIUM, REGULAR, SEMIBOLD, digits, galley, galley_on, galley_rows, galley_words,
+    paragraph, size, text,
 };
 pub use ticker_icon::{
-    cached_logo, chart_icon, chart_icon_with_label, monogram_with, round_image, source_badge,
-    ticker_icon,
+    cached_logo, chart_icon, chart_icon_with_label, monogram_on, monogram_with, round_image,
+    source_badge, ticker_icon,
 };

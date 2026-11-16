@@ -101,6 +101,9 @@ The edit is made inside the frame, so linked charts follow through the usual `en
 (time only; prices never sync; price-based types do not take part) and older history pages as for any
 pan. Replay already hands the card replay-cut bars, so a zoom cannot show a bar that is not there.
 
+Zoom In's pointer check (`ChartCard::pointer_is_held`) is shared with the snapshot menu's Select portion,
+which also owns the pointer while it runs: [Select portion](snapshots.md#select-portion).
+
 **Zoom out** appears under Zoom in (as in TradingView) while the focused chart has a zoom to go back
 from: it restores the exact view the last zoom came from. The card keeps up to 8 (`MAX_BACK`), cleared
 by `reset_view`, a symbol or timeframe change and a switch to or from a price-based type; none is saved.
@@ -174,8 +177,9 @@ or right after the first fetch (`OlderHistory::untouched`, so the first page is 
 the user scrolls), the chart asks `service::fetch_klines_range` for the 1,000 candles before it,
 through the work queue. One request is out at a time, a failure waits 15 s, an empty page marks the
 start of history, and a page for a market or timeframe the chart has left is dropped. A refresh
-keeps the older candles it did not bring (`history::with_older`) once a page has been loaded; the
-chart holds at most 100,000 candles.
+keeps the older candles it did not bring (`history::with_older`) once a page has been loaded or
+while one is in flight (a bar that opened meanwhile moves the oldest bar held, and the page, asked
+for with the old end, would leave it missing); the chart holds at most 100,000 candles.
 
 `DataSource::supports_older_history(timeframe)` says what can page. Coarser bars (1w, 1M, 3M, 1Y)
 are folded from finer pages with `service::fold_calendar`, whose first bucket is dropped when the

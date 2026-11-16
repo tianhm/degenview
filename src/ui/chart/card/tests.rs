@@ -132,6 +132,7 @@ fn slots_an_overlay_script_reserves_past_the_last_bar_narrow_every_slot_and_exte
     let plot = Rect::from_min_size(Pos2::ZERO, Vec2::new(550.0, 200.0));
     let alone = card
         .view(
+            card.framing(),
             &candles,
             (plot, 0.0),
             PriceScaleMode::Regular,
@@ -145,6 +146,7 @@ fn slots_an_overlay_script_reserves_past_the_last_bar_narrow_every_slot_and_exte
     };
     let with_script = card
         .view(
+            card.framing(),
             &candles,
             (plot, 0.0),
             PriceScaleMode::Regular,
@@ -165,6 +167,7 @@ fn the_price_scale_starts_below_the_header_while_the_plot_reaches_the_top() {
     let plot = Rect::from_min_size(Pos2::new(0.0, 10.0), Vec2::new(500.0, 300.0));
     let bare = card
         .view(
+            card.framing(),
             &candles,
             (plot, 0.0),
             PriceScaleMode::Regular,
@@ -173,6 +176,7 @@ fn the_price_scale_starts_below_the_header_while_the_plot_reaches_the_top() {
         .expect("view");
     let covered = card
         .view(
+            card.framing(),
             &candles,
             (plot, HEADER_HEIGHT),
             PriceScaleMode::Regular,
@@ -202,6 +206,7 @@ fn the_price_range_covers_every_line_not_only_the_candles() {
     let plot = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0));
     let alone = card
         .view(
+            card.framing(),
             &candles,
             (plot, 0.0),
             PriceScaleMode::Regular,
@@ -213,6 +218,7 @@ fn the_price_range_covers_every_line_not_only_the_candles() {
     card.set_series(two_lines());
     let with_lines = card
         .view(
+            card.framing(),
             &candles,
             (plot, 0.0),
             PriceScaleMode::Regular,
@@ -416,4 +422,125 @@ fn shared_colours_follow_the_drawn_types_colours_or_the_saved_palette() {
     );
     card.appearance_mut().bearish = [1, 2, 3];
     assert_eq!(card.bearish_color(), Color32::from_rgb(1, 2, 3));
+}
+
+#[test]
+fn a_bars_colour_follows_the_reference_the_drawn_type_colours_from() {
+    let bar = |open, close| Kline {
+        open_time: 0,
+        close_time: 1,
+        open,
+        high: open.max(close),
+        low: open.min(close),
+        close,
+        volume: 1.0,
+    };
+    let mut card = ChartCard::default();
+    let (up, down) = (card.bullish_color(), card.bearish_color());
+    // Closes above its open, below the previous close.
+    let (rising_bar, previous) = (bar(95.0, 98.0), Some(100.0));
+    assert_eq!(card.bar_color(&rising_bar, previous), up);
+    card.chart_style_mut().candles.color_by_previous_close = true;
+    assert_eq!(card.bar_color(&rising_bar, previous), down);
+    assert_eq!(
+        card.bar_color(&rising_bar, None),
+        up,
+        "no previous bar: against its own open"
+    );
+}
+
+/// The x positions along a header's middle where a press lands on a SELL or BUY pill (paper or
+/// live), as `(leftmost, rightmost)`.
+fn pill_span(card: &ChartCard, width: f32) -> (f32, f32) {
+    use crate::model::IndicatorConfig;
+    use crate::ui::render_tests::Screen;
+    let _restore = theme::RestoreDefaultTheme;
+    let indicators = IndicatorConfig::default();
+    let candles = [candle(64_000.0, 64_348.0)];
+    let mut screen = Screen::new(Vec2::new(width, 60.0));
+    // A press lands within a few points of a widget by default: only its own rect counts here.
+    screen
+        .ctx
+        .all_styles_mut(|style| style.interaction.interact_radius = 0.0);
+    let mut pressed = Vec::new();
+    let mut x = 2.0;
+    while x < width {
+        let at = egui::pos2(x, 22.0);
+        let mut action = ChartCardAction::default();
+        for (pressed_now, last) in [(true, false), (false, true)] {
+            let mut events = vec![egui::Event::PointerMoved(at)];
+            events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: pressed_now,
+                modifiers: egui::Modifiers::NONE,
+            });
+            let mut said = ChartCardAction::default();
+            screen.run(events, |ui| {
+                theme::sync(ui.ctx());
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE)
+                    .show(ui, |ui| {
+                        card.header(
+                            ui,
+                            "BTC-USD",
+                            DataSource::Coinbase,
+                            &indicators,
+                            &candles,
+                            false,
+                            false,
+                            &[],
+                            &mut said,
+                            1,
+                        );
+                    });
+            });
+            if last {
+                action = said;
+            }
+        }
+        if action.quick_trade.is_some() || action.live_trade.is_some() {
+            pressed.push(x);
+        }
+        x += 1.0;
+    }
+    assert!(!pressed.is_empty(), "the pills can be pressed");
+    (
+        pressed.iter().copied().fold(f32::MAX, f32::min),
+        pressed.iter().copied().fold(0.0, f32::max),
+    )
+}
+
+#[test]
+fn the_trade_pills_stay_left_of_the_price_axis() {
+    let width = 640.0;
+    let mut card = ChartCard::default();
+    card.paper.trading_enabled = true;
+    card.live.order_entry = Some(Ok(()));
+    card.live.broker_name = "Coinbase".to_owned();
+    card.live.bid = Some("74,380.32".to_owned());
+    card.live.ask = Some("74,396.74".to_owned());
+
+    // Before a plot is drawn the pills sit beside the star, as they always did.
+    let (_, beside_star) = pill_span(&card, width);
+    assert!(beside_star > width - 60.0, "{beside_star}");
+
+    // A wide and a narrow axis: the right pill ends a gap before it, whatever its width.
+    for axis in [64.0, 120.0] {
+        card.axis_width = axis;
+        let (left, right) = pill_span(&card, width);
+        assert!(
+            right <= width - axis - 8.0,
+            "axis {axis}: the pills reach x {right}, the axis starts at {}",
+            width - axis
+        );
+        assert!(
+            right > width - axis - 8.0 - 12.0,
+            "axis {axis}: the pills end close to the axis, not further left (at {right})"
+        );
+        assert!(
+            left > 108.0,
+            "the pills stay clear of the handle and the title: {left}"
+        );
+    }
 }

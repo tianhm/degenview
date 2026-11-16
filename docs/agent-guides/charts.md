@@ -54,7 +54,8 @@ Details: [chart types](../chart-types.md), [chart canvas](../chart-canvas.md),
 - Linked charts ([design](../chart-sync.md)) map viewport to time range and back; never copy an
   offset, bar index, or anything vertical. Followers are edited via `ChartCard::follow_sync` before
   drawing; publish only the user's own navigation, never a follower's change or a live bar.
-  `SyncHub` belongs to one `ChartWorkspace`, never global. Price-based chart types excluded.
+  `SyncHub` belongs to one `ChartWorkspace`, never global. Price-based chart types excluded. The
+  shared crosshair is by time, not plot fraction: only the owner reads `x_fraction`.
 
 ## Compared markets (overlays)
 
@@ -204,6 +205,16 @@ Read [chart overlays](../chart-overlays.md) first. Short rules:
   `snapshot_tests.rs` compares both frames shape for shape and fails on drift.
 - `paint_snapshot` is `&self`, read-only: no Pine run, cache write, viewport/pane/replay change. New
   chart state it reads must be cloneable or `Arc`.
+- A snapshot that must differ from the live frame (other bars, frozen outputs, no indicators, a
+  restyled canvas) says so in `SnapshotInput.frame`; the live viewport is never moved to take one.
+  `view()` and `frame_layout()` read a `Framing` (viewport and script extent), never `self.viewport`
+  directly.
+- The Screenshot Studio's composer (`ui/snapshot_studio/compose/`) is the only presentation layer
+  around `paint_snapshot`: backdrop, shadow, title block, mark and layout positions. It never draws
+  a chart itself; a preview and an export are one `compose::paint` at two scales. The Studio's
+  look (style, size, backdrop, include) is remembered in `snapshot.prefs.studio`; the area, framing
+  and selection belong to one capture and are never stored.
+  [Chart snapshots](../snapshots.md).
 - Frame frozen on the UI thread in one pass; saving, rasterizing, PNG, upload run on
   `work_queue::SNAPSHOTS`, handing clipboard/browser work back as an `Outcome`. Never report a copy,
   save or open before it happened.
