@@ -103,13 +103,7 @@ impl ChartWorkspace {
         }
     }
 
-    fn apply_live_kline(
-        &mut self,
-        source: DataSource,
-        symbol: &str,
-        kline: Kline,
-        now: Instant,
-    ) {
+    fn apply_live_kline(&mut self, source: DataSource, symbol: &str, kline: Kline, now: Instant) {
         for chart in self.charts.iter_mut().filter(|chart| {
             chart.source == source
                 && if source == DataSource::TqSdk {
@@ -144,7 +138,12 @@ mod tests {
         other.candles = vec![candle(1, 1.0)];
         workspace.charts.push(other);
 
-        workspace.apply_live_kline("btcusdt", candle(2, 5.0), Instant::now());
+        workspace.apply_live_kline(
+            DataSource::Binance,
+            "btcusdt",
+            candle(2, 5.0),
+            Instant::now(),
+        );
 
         let lens: Vec<usize> = workspace.charts.iter().map(|c| c.candles.len()).collect();
         assert_eq!(lens, [2, 2, 1]);
@@ -158,7 +157,12 @@ mod tests {
         chart.candles = vec![candle(1, 1.0), candle(2, 2.0)];
         workspace.charts.push(chart);
 
-        workspace.apply_live_kline("BTCUSDT", candle(1, 9.0), Instant::now());
+        workspace.apply_live_kline(
+            DataSource::Binance,
+            "BTCUSDT",
+            candle(1, 9.0),
+            Instant::now(),
+        );
 
         assert_eq!(
             workspace.charts[0].candles,
