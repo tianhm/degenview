@@ -74,6 +74,8 @@ enum AppAction {
     OpenPineSource(crate::model::pine::logs_view::SourceTarget),
     /// Open Settings on the Alpaca page.
     OpenAlpacaSettings,
+    /// Open Settings on the TqSdk page.
+    OpenTqSdkSettings,
     OpenBrokerSettings,
     /// Open Settings on the AI Assistant page.
     OpenAiSettings,
@@ -217,6 +219,7 @@ impl DegenViewApp {
             paper.clone(),
             Some(store.clone()),
         );
+        trading_hub.futures().attach(&creation.egui_ctx);
         trading_hub.connect_enabled();
         let snapshots = SnapshotHost::load(store.clone());
         {

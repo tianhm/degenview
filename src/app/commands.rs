@@ -121,6 +121,9 @@ impl DegenViewApp {
                 AppAction::OpenAlpacaSettings => {
                     self.open_settings_page(ctx, SettingsHost::open_alpaca);
                 }
+                AppAction::OpenTqSdkSettings => {
+                    self.open_settings_page(ctx, SettingsHost::open_tqsdk);
+                }
                 AppAction::OpenBrokerSettings => {
                     self.open_settings_page(ctx, SettingsHost::open_brokers);
                 }

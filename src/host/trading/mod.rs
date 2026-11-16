@@ -15,16 +15,20 @@
 mod tests;
 
 use std::collections::BTreeSet;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 use super::broker::{BrokerHost, Connection, Operation};
+use super::futures::FuturesHost;
 use super::paper::PaperHost;
 use crate::lock::lock;
 use crate::model::broker::prefs::BrokerPrefs;
 use crate::model::broker::venue::TradingVenue;
+use crate::service::keychain::api_keys::TqSdkTradeCredentialsStore;
 use crate::store::SharedStore;
 use crate::trading::backend::TradingBackend;
 use crate::trading::broker::backend::BrokerBackend;
+use crate::trading::futures::FuturesBackend;
 use crate::trading::model::VenueInfo;
 use crate::trading::paper::backend::PaperBackend;
 use crate::trading::task::Task;
@@ -44,6 +48,7 @@ fn venue_id(venue: TradingVenue) -> String {
     match venue {
         TradingVenue::Paper => PAPER_ID.to_owned(),
         TradingVenue::Broker(id) => id.as_str().to_owned(),
+        TradingVenue::TqSdk => "tqsdk".to_owned(),
     }
 }
 
@@ -55,6 +60,7 @@ struct Choices {
 
 pub struct TradingHub {
     brokers: Arc<BrokerHost>,
+    futures: Arc<FuturesHost>,
     paper: Arc<Mutex<PaperHost>>,
     store: Option<SharedStore>,
     choices: Mutex<Choices>,
@@ -94,6 +100,7 @@ impl TradingHub {
         if first_run && paper_was_used(&lock(&paper)) {
             enabled.insert(PAPER_ID.to_owned());
         }
+        let futures = FuturesHost::new(Arc::new(AtomicU64::new(0)));
         let mut backends: Vec<(TradingVenue, Arc<dyn TradingBackend>)> = vec![(
             TradingVenue::Paper,
             Arc::new(PaperBackend::new(Arc::clone(&paper))),
@@ -104,8 +111,13 @@ impl TradingHub {
                 Arc::new(BrokerBackend::new(Arc::clone(&brokers), broker)),
             ));
         }
+        backends.push((
+            TradingVenue::TqSdk,
+            Arc::new(FuturesBackend::new(Arc::clone(&futures))),
+        ));
         let hub = Arc::new(Self {
             brokers,
+            futures,
             paper,
             store,
             choices: Mutex::new(Choices { enabled, last_used }),
@@ -152,7 +164,11 @@ impl TradingHub {
             .map(|(_, backend)| Arc::clone(backend))
     }
 
-    /// Every venue this build has, paper first, then the brokers in registry order.
+    pub fn futures(&self) -> &Arc<FuturesHost> {
+        &self.futures
+    }
+
+    /// Every venue this build has, paper first, then the brokers in registry order, then TqSdk.
     pub fn all_venues(&self) -> Vec<TradingVenue> {
         let mut venues = vec![TradingVenue::Paper];
         venues.extend(
@@ -161,6 +177,7 @@ impl TradingHub {
                 .into_iter()
                 .map(|broker| TradingVenue::Broker(broker.descriptor().id)),
         );
+        venues.push(TradingVenue::TqSdk);
         venues
     }
 
@@ -176,8 +193,13 @@ impl TradingHub {
             return true;
         }
         // A key saved before the setting existed.
-        matches!(venue, TradingVenue::Broker(id)
-            if !matches!(self.brokers.connection(id), Connection::NotConfigured))
+        match venue {
+            TradingVenue::Broker(id) => {
+                !matches!(self.brokers.connection(id), Connection::NotConfigured)
+            }
+            TradingVenue::TqSdk => TqSdkTradeCredentialsStore::shared().is_configured(),
+            TradingVenue::Paper => false,
+        }
     }
 
     pub fn enabled_venues(&self) -> Vec<TradingVenue> {
@@ -224,6 +246,7 @@ impl TradingHub {
                 });
             }
             TradingVenue::Broker(id) => self.brokers.connect_without_credentials(id),
+            TradingVenue::TqSdk => self.futures.connect_saved(),
         }
     }
 
@@ -255,6 +278,10 @@ impl TradingHub {
         self.save_enabled();
         match venue {
             TradingVenue::Broker(id) => self.brokers.disconnect(id),
+            TradingVenue::TqSdk => {
+                self.futures.disconnect();
+                Task::ready(Ok(()))
+            }
             TradingVenue::Paper => Task::ready(Ok(())),
         }
     }
@@ -264,8 +291,10 @@ impl TradingHub {
     pub fn connect_enabled(self: &Arc<Self>) {
         self.brokers.connect_all_saved();
         for venue in self.enabled_venues() {
-            if let TradingVenue::Broker(id) = venue {
-                self.brokers.connect_without_credentials(id);
+            match venue {
+                TradingVenue::Broker(id) => self.brokers.connect_without_credentials(id),
+                TradingVenue::TqSdk => self.futures.connect_saved(),
+                TradingVenue::Paper => {}
             }
         }
     }

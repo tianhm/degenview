@@ -4,6 +4,7 @@ pub mod broker;
 pub mod chart;
 pub mod drawing;
 pub mod editor_appearance;
+pub mod futures;
 pub mod icons;
 pub mod kit;
 pub mod mcp;

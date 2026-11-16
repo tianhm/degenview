@@ -37,7 +37,7 @@ pub fn policy(source: DataSource) -> Option<Policy> {
     let fresh = match source {
         DataSource::CoinGecko => 120,
         DataSource::DexScreener => 30,
-        DataSource::Coinbase | DataSource::Alpaca => 0,
+        DataSource::Coinbase | DataSource::Alpaca | DataSource::TqSdk => 0,
         _ => return None,
     };
     Some(Policy {

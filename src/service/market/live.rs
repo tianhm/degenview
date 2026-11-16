@@ -79,6 +79,118 @@ impl Drop for BinanceLiveFeed {
     }
 }
 
+/// A TqSdk DIFF kline stream for one workspace's futures charts (`1m`..=`1d`).
+pub struct TqSdkLiveFeed {
+    pub inbox: Arc<LiveInbox>,
+    signature: (Vec<String>, String),
+    shutdown: Arc<AtomicBool>,
+}
+
+impl TqSdkLiveFeed {
+    pub fn connect(symbols: Vec<String>, interval: String, ctx: egui::Context) -> Self {
+        let inbox = Arc::new(LiveInbox::default());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let thread_shutdown = Arc::clone(&shutdown);
+        let thread_inbox = Arc::clone(&inbox);
+        let signature = (symbols.clone(), interval.clone());
+        std::thread::spawn(move || {
+            run_tqsdk(symbols, interval, &thread_inbox, thread_shutdown, ctx);
+        });
+        Self {
+            inbox,
+            signature,
+            shutdown,
+        }
+    }
+
+    pub fn signature(&self) -> &(Vec<String>, String) {
+        &self.signature
+    }
+}
+
+impl Drop for TqSdkLiveFeed {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Release);
+    }
+}
+
+fn run_tqsdk(
+    symbols: Vec<String>,
+    interval: String,
+    inbox: &LiveInbox,
+    shutdown: Arc<AtomicBool>,
+    ctx: egui::Context,
+) {
+    let Some(duration_ns) = super::tqsdk::live_duration_ns(&interval) else {
+        return;
+    };
+    let duration_ms = duration_ns / 1_000_000;
+    let duration_key = duration_ns.to_string();
+    let mut backoff = crate::service::net::ws::Backoff::new();
+    let mut last_pushed: std::collections::HashMap<String, Kline> =
+        std::collections::HashMap::new();
+
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            return;
+        }
+        if let Ok(mut socket) = super::tqsdk::connect_md_socket() {
+            let mut subscribed = true;
+            for (index, symbol) in symbols.iter().enumerate() {
+                let req = serde_json::json!({
+                    "aid": "set_chart",
+                    "chart_id": format!("DGV_live_{index}"),
+                    "ins_list": symbol,
+                    "duration": duration_ns,
+                    "view_width": 2,
+                });
+                if socket.send_text(&req.to_string()).is_err() {
+                    subscribed = false;
+                    break;
+                }
+            }
+            if subscribed && socket.send_text(r#"{"aid":"peek_message"}"#).is_ok() {
+                let mut state = Value::Object(Default::default());
+                while !shutdown.load(Ordering::Acquire) {
+                    match super::tqsdk::read_and_merge_pack(&mut socket, &mut state) {
+                        Ok(true) => {
+                            backoff.reset();
+                            let mut any = false;
+                            for symbol in &symbols {
+                                let klines = super::tqsdk::extract_klines(
+                                    &state,
+                                    symbol,
+                                    &duration_key,
+                                    duration_ms,
+                                );
+                                if let Some(latest) = klines.last().cloned()
+                                    && last_pushed.get(symbol) != Some(&latest)
+                                {
+                                    last_pushed.insert(symbol.clone(), latest.clone());
+                                    inbox.push(symbol.clone(), latest);
+                                    any = true;
+                                }
+                            }
+                            if any {
+                                ctx.request_repaint();
+                            }
+                            if socket.send_text(r#"{"aid":"peek_message"}"#).is_err() {
+                                break;
+                            }
+                        }
+                        Ok(false) => {}
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
+        if shutdown.load(Ordering::Acquire) {
+            return;
+        }
+        backoff.wait(&shutdown);
+    }
+}
+
 fn run(
     symbols: Vec<String>,
     interval: String,
@@ -91,14 +203,17 @@ fn run(
         .map(|symbol| format!("{}@kline_{interval}", symbol.to_lowercase()))
         .collect::<Vec<_>>()
         .join("/");
-    let url = format!("wss://stream.binance.com/stream?streams={streams}");
+    // Market-data-only stream host (same combined streams as `stream.binance.com`).
+    let url = format!("wss://data-stream.binance.vision/stream?streams={streams}");
     let mut backoff = crate::service::net::ws::Backoff::new();
 
     loop {
         if shutdown.load(Ordering::Acquire) {
             return;
         }
-        if let Ok(mut socket) = crate::service::net::ws::connect(&url, "stream.binance.com", 443) {
+        if let Ok(mut socket) =
+            crate::service::net::ws::connect(&url, "data-stream.binance.vision", 443)
+        {
             let mut health = crate::service::net::ws::Health::new(Duration::from_secs(60));
             while !shutdown.load(Ordering::Acquire) {
                 match health.read(&mut socket) {

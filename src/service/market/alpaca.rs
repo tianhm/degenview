@@ -44,7 +44,13 @@ fn monthly_fold(interval: &str) -> Option<i64> {
 
 fn timeframe(interval: &str) -> &'static str {
     match interval {
+        "1m" => "1Min",
+        "3m" => "3Min",
+        "5m" => "5Min",
+        "15m" => "15Min",
+        "30m" => "30Min",
         "1h" => "1Hour",
+        "4h" => "4Hour",
         "1d" => "1Day",
         "1w" => "1Week",
         "1M" => "1Month",
@@ -54,7 +60,13 @@ fn timeframe(interval: &str) -> &'static str {
 
 fn seconds_per_candle(interval: &str) -> i64 {
     match interval {
+        "1m" => 60,
+        "3m" => 180,
+        "5m" => 300,
+        "15m" => 900,
+        "30m" => 1_800,
         "1h" => 3_600,
+        "4h" => 14_400,
         "1d" => 86_400,
         "1w" => 604_800,
         "1M" => 2_592_000,
@@ -64,7 +76,7 @@ fn seconds_per_candle(interval: &str) -> i64 {
 
 fn market_gap_factor(interval: &str) -> f64 {
     match interval {
-        "1h" => 6.0,
+        "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "4h" => 6.0,
         "1d" => 2.0,
         "1w" => 1.6,
         "1M" => 1.5,

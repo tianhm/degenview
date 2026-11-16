@@ -12,6 +12,7 @@ pub mod broker;
 pub mod confirm;
 pub mod draft;
 pub mod edit;
+pub mod futures;
 pub mod model;
 pub mod money;
 pub mod paper;

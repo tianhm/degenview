@@ -8,18 +8,19 @@ pub enum TradingVenue {
     #[default]
     Paper,
     Broker(BrokerId),
+    TqSdk,
 }
 
 impl TradingVenue {
     pub fn broker(self) -> Option<BrokerId> {
         match self {
-            Self::Paper => None,
+            Self::Paper | Self::TqSdk => None,
             Self::Broker(id) => Some(id),
         }
     }
 
     pub fn is_live(self) -> bool {
-        matches!(self, Self::Broker(_))
+        matches!(self, Self::Broker(_) | Self::TqSdk)
     }
 }
 

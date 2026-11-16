@@ -210,7 +210,10 @@ fn resolve(source: DataSource, ticker: &str, base: &str) -> (Option<String>, boo
         };
     }
     // The other prediction markets have no coin behind them, and a CoinMarketCap card is an index.
-    if source.is_prediction_market() || source == DataSource::CoinMarketCap {
+    // TqSdk futures contracts are identified by their product monogram.
+    if source.is_prediction_market()
+        || matches!(source, DataSource::CoinMarketCap | DataSource::TqSdk)
+    {
         return (None, false);
     }
     if source == DataSource::Alpaca {

@@ -15,6 +15,8 @@ use std::sync::{Mutex, OnceLock};
 
 const ALPACA_SERVICE: &str = "es.nico.degenview.alpaca";
 const ALPACA_ACCOUNT: &str = "credentials-v1";
+const TQSDK_SERVICE: &str = "es.nico.degenview.tqsdk";
+const TQSDK_ACCOUNT: &str = "credentials-v1";
 const CMC_SERVICE: &str = "es.nico.degenview.coinmarketcap";
 const CMC_ACCOUNT: &str = "api-key-v1";
 
@@ -215,6 +217,232 @@ impl AlpacaCredentialsStore {
     }
 }
 
+// MARK: TqSdk
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TqSdkCredentials {
+    pub username: String,
+    pub password: String,
+}
+
+impl TqSdkCredentials {
+    pub fn is_configured(&self) -> bool {
+        !self.username.trim().is_empty() && !self.password.trim().is_empty()
+    }
+
+    fn trimmed(&self) -> Self {
+        Self {
+            username: self.username.trim().to_owned(),
+            password: self.password.trim().to_owned(),
+        }
+    }
+}
+
+const TQSDK_SHARED: Scope = Scope {
+    service: TQSDK_SERVICE,
+    shared_group: true,
+};
+const TQSDK_OWN: Scope = Scope {
+    service: TQSDK_SERVICE,
+    shared_group: false,
+};
+
+#[derive(Default)]
+struct TqSdkCache {
+    credentials: Option<TqSdkCredentials>,
+    exists: Option<bool>,
+}
+
+pub struct TqSdkCredentialsStore {
+    backend: Box<dyn KeyBackend>,
+    cache: Mutex<TqSdkCache>,
+}
+
+impl TqSdkCredentialsStore {
+    pub fn with_backend(backend: Box<dyn KeyBackend>) -> Self {
+        Self {
+            backend,
+            cache: Mutex::new(TqSdkCache::default()),
+        }
+    }
+
+    /// The app-wide store.
+    pub fn shared() -> &'static Self {
+        static STORE: OnceLock<TqSdkCredentialsStore> = OnceLock::new();
+        STORE.get_or_init(|| Self::with_backend(default_backend()))
+    }
+
+    /// The saved credentials, or empty ones.
+    pub fn credentials(&self) -> TqSdkCredentials {
+        let mut cache = lock(&self.cache);
+        if let Some(credentials) = &cache.credentials {
+            return credentials.clone();
+        }
+        let stored = self
+            .backend
+            .read(TQSDK_SHARED, TQSDK_ACCOUNT)
+            .or_else(|| self.backend.read(TQSDK_OWN, TQSDK_ACCOUNT))
+            .and_then(|text| {
+                serde_json::from_str::<TqSdkCredentials>(&text)
+                    .ok()
+                    .map(|credentials| (text, credentials))
+            });
+        let credentials = match stored {
+            Some((text, credentials)) => {
+                let _ = self.backend.write(TQSDK_SHARED, TQSDK_ACCOUNT, &text);
+                credentials
+            }
+            None => TqSdkCredentials::default(),
+        };
+        cache.credentials = Some(credentials.clone());
+        credentials
+    }
+
+    /// Whether credentials are saved. Reads attributes only, so it never prompts.
+    pub fn is_configured(&self) -> bool {
+        let mut cache = lock(&self.cache);
+        if let Some(credentials) = &cache.credentials {
+            return credentials.is_configured();
+        }
+        if let Some(exists) = cache.exists {
+            return exists;
+        }
+        let found = self.backend.exists(TQSDK_SHARED, TQSDK_ACCOUNT)
+            || self.backend.exists(TQSDK_OWN, TQSDK_ACCOUNT);
+        cache.exists = Some(found);
+        found
+    }
+
+    /// Saves trimmed credentials; incomplete ones remove the saved item.
+    pub fn save(&self, credentials: &TqSdkCredentials) -> Result<(), SecretStoreError> {
+        let normalized = credentials.trimmed();
+        if normalized.is_configured() {
+            let text = serde_json::to_string(&normalized)
+                .map_err(|error| SecretStoreError(error.to_string()))?;
+            self.backend.write(TQSDK_SHARED, TQSDK_ACCOUNT, &text)?;
+        } else {
+            let shared = self.backend.delete(TQSDK_SHARED, TQSDK_ACCOUNT);
+            let own = self.backend.delete(TQSDK_OWN, TQSDK_ACCOUNT);
+            shared.and(own)?;
+        }
+        let mut cache = lock(&self.cache);
+        cache.credentials = Some(normalized);
+        cache.exists = None;
+        drop(cache);
+        Ok(())
+    }
+}
+
+// MARK: TqSdk Trade
+
+const TQSDK_TRADE_ACCOUNT: &str = "tqsdk_trade";
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TqSdkTradeCredentials {
+    pub broker_id: String,
+    pub account_id: String,
+    pub password: String,
+}
+
+impl TqSdkTradeCredentials {
+    pub fn is_configured(&self) -> bool {
+        !self.broker_id.trim().is_empty()
+            && !self.account_id.trim().is_empty()
+            && !self.password.trim().is_empty()
+    }
+
+    fn trimmed(&self) -> Self {
+        Self {
+            broker_id: self.broker_id.trim().to_owned(),
+            account_id: self.account_id.trim().to_owned(),
+            password: self.password.trim().to_owned(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct TqSdkTradeCache {
+    credentials: Option<TqSdkTradeCredentials>,
+    exists: Option<bool>,
+}
+
+pub struct TqSdkTradeCredentialsStore {
+    backend: Box<dyn KeyBackend>,
+    cache: Mutex<TqSdkTradeCache>,
+}
+
+impl TqSdkTradeCredentialsStore {
+    pub fn with_backend(backend: Box<dyn KeyBackend>) -> Self {
+        Self {
+            backend,
+            cache: Mutex::new(TqSdkTradeCache::default()),
+        }
+    }
+
+    pub fn shared() -> &'static Self {
+        static STORE: OnceLock<TqSdkTradeCredentialsStore> = OnceLock::new();
+        STORE.get_or_init(|| Self::with_backend(default_backend()))
+    }
+
+    pub fn credentials(&self) -> TqSdkTradeCredentials {
+        let mut cache = lock(&self.cache);
+        if let Some(credentials) = &cache.credentials {
+            return credentials.clone();
+        }
+        let stored = self
+            .backend
+            .read(TQSDK_SHARED, TQSDK_TRADE_ACCOUNT)
+            .or_else(|| self.backend.read(TQSDK_OWN, TQSDK_TRADE_ACCOUNT))
+            .and_then(|text| {
+                serde_json::from_str::<TqSdkTradeCredentials>(&text)
+                    .ok()
+                    .map(|credentials| (text, credentials))
+            });
+        let credentials = match stored {
+            Some((text, credentials)) => {
+                let _ = self.backend.write(TQSDK_SHARED, TQSDK_TRADE_ACCOUNT, &text);
+                credentials
+            }
+            None => TqSdkTradeCredentials::default(),
+        };
+        cache.credentials = Some(credentials.clone());
+        credentials
+    }
+
+    pub fn is_configured(&self) -> bool {
+        let mut cache = lock(&self.cache);
+        if let Some(credentials) = &cache.credentials {
+            return credentials.is_configured();
+        }
+        if let Some(exists) = cache.exists {
+            return exists;
+        }
+        let found = self.backend.exists(TQSDK_SHARED, TQSDK_TRADE_ACCOUNT)
+            || self.backend.exists(TQSDK_OWN, TQSDK_TRADE_ACCOUNT);
+        cache.exists = Some(found);
+        found
+    }
+
+    pub fn save(&self, credentials: &TqSdkTradeCredentials) -> Result<(), SecretStoreError> {
+        let normalized = credentials.trimmed();
+        if normalized.is_configured() {
+            let text = serde_json::to_string(&normalized)
+                .map_err(|error| SecretStoreError(error.to_string()))?;
+            self.backend
+                .write(TQSDK_SHARED, TQSDK_TRADE_ACCOUNT, &text)?;
+        } else {
+            let shared = self.backend.delete(TQSDK_SHARED, TQSDK_TRADE_ACCOUNT);
+            let own = self.backend.delete(TQSDK_OWN, TQSDK_TRADE_ACCOUNT);
+            shared.and(own)?;
+        }
+        let mut cache = lock(&self.cache);
+        cache.credentials = Some(normalized);
+        cache.exists = None;
+        drop(cache);
+        Ok(())
+    }
+}
+
 // MARK: CoinMarketCap
 
 const CMC: Scope = Scope {
@@ -309,6 +537,10 @@ impl CoinMarketCapKeyStore {
 /// Environment names, kept as a developer convenience when nothing is saved in the app.
 pub const ALPACA_KEY_ID_ENV: &str = "DEGENVIEW_ALPACA_KEY_ID";
 pub const ALPACA_SECRET_KEY_ENV: &str = "DEGENVIEW_ALPACA_SECRET_KEY";
+pub const TQSDK_USER_ENV: &str = "DEGENVIEW_TQSDK_USER";
+pub const TQSDK_PASSWORD_ENV: &str = "DEGENVIEW_TQSDK_PASSWORD";
+pub const SHINNYTECH_ID_ENV: &str = "SHINNYTECH_ID";
+pub const SHINNYTECH_PW_ENV: &str = "SHINNYTECH_PW";
 pub const CMC_API_KEY_ENV: &str = "DEGENVIEW_CMC_API_KEY";
 
 fn non_empty(value: Option<String>) -> Option<String> {
@@ -344,6 +576,29 @@ pub fn alpaca_credentials_with(
 
 pub fn alpaca_credentials() -> Option<(String, String)> {
     alpaca_credentials_with(AlpacaCredentialsStore::shared(), &|name| {
+        std::env::var(name).ok()
+    })
+}
+
+/// The TqSdk username and password to send: what the user saved in Settings, else the environment.
+pub fn tqsdk_credentials_with(
+    store: &TqSdkCredentialsStore,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Option<(String, String)> {
+    if store.is_configured() {
+        let saved = store.credentials();
+        if saved.is_configured() {
+            return Some((saved.username, saved.password));
+        }
+    }
+    let user = non_empty(env(TQSDK_USER_ENV)).or_else(|| non_empty(env(SHINNYTECH_ID_ENV)))?;
+    let password =
+        non_empty(env(TQSDK_PASSWORD_ENV)).or_else(|| non_empty(env(SHINNYTECH_PW_ENV)))?;
+    Some((user, password))
+}
+
+pub fn tqsdk_credentials() -> Option<(String, String)> {
+    tqsdk_credentials_with(TqSdkCredentialsStore::shared(), &|name| {
         std::env::var(name).ok()
     })
 }
@@ -559,5 +814,36 @@ mod tests {
         cmc.remove().unwrap();
         assert_eq!(cmc_api_key_with(&cmc, &|_| None), None);
         assert_eq!(cmc_api_key_with(&cmc, &|_| Some("  ".to_owned())), None);
+    }
+
+    #[test]
+    fn saved_tqsdk_credentials_are_trimmed_and_fall_back_to_environment() {
+        let memory = Arc::new(MemoryBackend::default());
+        let reads = Arc::new(AtomicU64::new(0));
+        let store =
+            TqSdkCredentialsStore::with_backend(Box::new(Shared(memory.clone(), reads.clone())));
+        assert!(!store.is_configured());
+        let env = |name: &str| match name {
+            SHINNYTECH_ID_ENV => Some(" shinny-user ".to_owned()),
+            SHINNYTECH_PW_ENV => Some("shinny-pass".to_owned()),
+            _ => None,
+        };
+        assert_eq!(
+            tqsdk_credentials_with(&store, &env),
+            Some(("shinny-user".to_owned(), "shinny-pass".to_owned()))
+        );
+        store
+            .save(&TqSdkCredentials {
+                username: "  saved-user ".into(),
+                password: " saved-pass\n".into(),
+            })
+            .unwrap();
+        assert!(store.is_configured());
+        assert_eq!(
+            tqsdk_credentials_with(&store, &env),
+            Some(("saved-user".to_owned(), "saved-pass".to_owned()))
+        );
+        store.save(&TqSdkCredentials::default()).unwrap();
+        assert!(!store.is_configured());
     }
 }

@@ -52,12 +52,13 @@ const QUOTE_POLL: Duration = Duration::from_millis(100);
 const DEFAULT_ENTRY_PAGE: usize = 100;
 
 /// Providers searched when the caller names none: every one a market can be charted from.
-const ALL_SOURCES: [McpSource; 5] = [
+const ALL_SOURCES: [McpSource; 6] = [
     McpSource::Binance,
     McpSource::Coinbase,
     McpSource::Coingecko,
     McpSource::Dexscreener,
     McpSource::Alpaca,
+    McpSource::Tqsdk,
 ];
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

@@ -116,6 +116,7 @@ impl ChartWorkspace {
                 ));
             }
             Some(Output::OpenAlpacaSettings) => actions.push(WorkspaceAction::OpenAlpacaSettings),
+            Some(Output::OpenTqSdkSettings) => actions.push(WorkspaceAction::OpenTqSdkSettings),
             None => {}
         }
         if !self.symbol_picker.is_open() {

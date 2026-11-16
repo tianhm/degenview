@@ -809,10 +809,10 @@ impl DrawingStyle {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
 pub struct Visibility {
-    pub mask: u8,
+    pub mask: u16,
 }
 
-const ALL_TIMEFRAMES: u8 = (1 << Timeframe::ALL.len()) - 1;
+const ALL_TIMEFRAMES: u16 = (1 << Timeframe::ALL.len()) - 1;
 
 impl Default for Visibility {
     fn default() -> Self {
@@ -827,7 +827,7 @@ impl Visibility {
 
     /// Each timeframe owns one fixed bit, so the saved masks keep their meaning if the list of
     /// timeframes is ever reordered or extended.
-    fn bit(timeframe: Timeframe) -> u8 {
+    fn bit(timeframe: Timeframe) -> u16 {
         match timeframe {
             Timeframe::Hour => 1 << 0,
             Timeframe::Day => 1 << 1,
@@ -835,12 +835,18 @@ impl Visibility {
             Timeframe::Month => 1 << 3,
             Timeframe::Quarter => 1 << 4,
             Timeframe::Year => 1 << 5,
+            Timeframe::Min1 => 1 << 6,
+            Timeframe::Min3 => 1 << 7,
+            Timeframe::Min5 => 1 << 8,
+            Timeframe::Min15 => 1 << 9,
+            Timeframe::Min30 => 1 << 10,
+            Timeframe::Hour4 => 1 << 11,
         }
     }
 
     /// The mask in force: one that names no timeframe (a damaged row) means every one, so a
     /// drawing can never be lost to being shown nowhere.
-    fn effective(&self) -> u8 {
+    fn effective(&self) -> u16 {
         match self.mask & ALL_TIMEFRAMES {
             0 => ALL_TIMEFRAMES,
             mask => mask,
@@ -890,11 +896,11 @@ mod tests {
                 .iter()
                 .all(|timeframe| damaged.shows(*timeframe))
         );
-        let beyond = Visibility { mask: 0b1100_0000 };
+        let beyond = Visibility { mask: 0xF000 };
         assert!(beyond.is_all(), "bits no timeframe owns name nothing");
         // The saved form is stable: Day is bit 1, Week bit 2.
         let weekly_off = Visibility::ALL.with(Timeframe::Week, false);
-        assert_eq!(weekly_off.mask, 0b11_1011);
+        assert_eq!(weekly_off.mask, 0b1111_1111_1011);
         assert!(!weekly_off.shows(Timeframe::Week) && weekly_off.shows(Timeframe::Day));
     }
 

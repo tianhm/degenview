@@ -9,7 +9,9 @@ use crate::model::alert::{
 };
 use crate::model::mcp::McpAction;
 use crate::platform;
-use crate::service::keychain::api_keys::{AlpacaCredentialsStore, CoinMarketCapKeyStore};
+use crate::service::keychain::api_keys::{
+    AlpacaCredentialsStore, CoinMarketCapKeyStore, TqSdkCredentialsStore,
+};
 use crate::ui::icons::{self, Icon};
 use crate::ui::kit::{Tone, time_text::relative_time};
 use crate::ui::settings::api_keys::{self, ApiKeysState};
@@ -31,6 +33,7 @@ pub enum SettingsSection {
     Appearance,
     PineStudio,
     Alpaca,
+    TqSdk,
     Brokers,
     CoinMarketCap,
     Ai,
@@ -44,10 +47,11 @@ pub enum SettingsSection {
 }
 
 impl SettingsSection {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Appearance,
         Self::PineStudio,
         Self::Alpaca,
+        Self::TqSdk,
         Self::Brokers,
         Self::CoinMarketCap,
         Self::Ai,
@@ -72,6 +76,7 @@ impl SettingsSection {
             Self::Appearance => "Appearance",
             Self::PineStudio => "Pine Studio",
             Self::Alpaca => "Alpaca",
+            Self::TqSdk => "TqSdk",
             Self::Brokers => "Brokers",
             Self::CoinMarketCap => "CoinMarketCap",
             Self::Ai => "AI Assistant",
@@ -91,6 +96,7 @@ impl SettingsSection {
             Self::Appearance => Color32::from_rgb(94, 92, 230),
             Self::PineStudio => Color32::from_rgb(172, 142, 104),
             Self::Alpaca => Color32::from_rgb(255, 159, 10),
+            Self::TqSdk => Color32::from_rgb(245, 158, 11),
             Self::Brokers => Color32::from_rgb(255, 112, 67),
             Self::CoinMarketCap => Color32::from_rgb(10, 132, 255),
             Self::Ai => Color32::from_rgb(255, 214, 10),
@@ -110,6 +116,7 @@ impl SettingsSection {
             Self::Appearance => "appearance",
             Self::PineStudio => "pinestudio",
             Self::Alpaca => "alpaca",
+            Self::TqSdk => "tqsdk",
             Self::Brokers => "brokers",
             Self::CoinMarketCap => "coinmarketcap",
             Self::Ai => "ai",
@@ -322,7 +329,7 @@ impl SettingsSection {
         match self {
             Self::Appearance => Icon::Paintbrush,
             Self::PineStudio => Icon::AngleBrackets,
-            Self::Alpaca => Icon::ChartLine,
+            Self::Alpaca | Self::TqSdk => Icon::ChartLine,
             Self::Brokers => Icon::ArrowLeftRight,
             Self::CoinMarketCap => Icon::Gauge,
             Self::Ai => Icon::Sparkles,
@@ -432,6 +439,15 @@ pub fn show(
                 section,
                 "Connect Alpaca to chart US stocks and ETFs in DegenView.",
                 |ui| api_keys::alpaca_body(ui, &mut state.api_keys, store),
+            );
+        }
+        SettingsSection::TqSdk => {
+            let store = TqSdkCredentialsStore::shared();
+            page_shell(
+                &mut page,
+                section,
+                "Connect TqSdk (Shinny) to chart and trade Chinese futures contracts in DegenView.",
+                |ui| api_keys::tqsdk_body(ui, &mut state.api_keys, store, Some(input.trading_hub)),
             );
         }
         SettingsSection::Brokers => {

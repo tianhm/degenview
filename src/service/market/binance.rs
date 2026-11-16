@@ -5,7 +5,9 @@ use crate::service::{MarketSource, ProviderError, SearchResult, fold_calendar, r
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-const BASE_URL: &str = "https://api.binance.com/api/v3/klines";
+/// Market-data-only host: same public `/api/v3` paths as `api.binance.com`, but reachable
+/// where that host answers HTTP 451 for regional restrictions.
+const REST_HOST: &str = "https://data-api.binance.vision";
 
 pub struct Binance;
 
@@ -38,7 +40,7 @@ impl MarketSource for Binance {
             None => limit as usize,
         };
         let url = format!(
-            "{BASE_URL}?symbol={}&interval={native}&limit={requested}",
+            "{REST_HOST}/api/v3/klines?symbol={}&interval={native}&limit={requested}",
             symbol.to_uppercase()
         );
         let body = crate::service::net::http::get_text(
@@ -87,7 +89,7 @@ impl MarketSource for Binance {
                         scope.spawn(move || {
                             let to = (from + page_ms).min(end_ms) - 1;
                             let url = format!(
-                                "{BASE_URL}?symbol={}&interval={interval}&startTime={from}&endTime={to}&limit={PAGE}",
+                                "{REST_HOST}/api/v3/klines?symbol={}&interval={interval}&startTime={from}&endTime={to}&limit={PAGE}",
                                 symbol.to_uppercase()
                             );
                             let body =
@@ -168,7 +170,7 @@ pub(in crate::service) fn clear_catalog() {
 
 fn download_pairs() -> Result<Vec<Pair>, ProviderError> {
     let body = crate::service::net::http::get_text(
-        "https://api.binance.com/api/v3/exchangeInfo",
+        &format!("{REST_HOST}/api/v3/exchangeInfo"),
         &[],
         crate::service::net::http::Retry::Transient,
     )?;

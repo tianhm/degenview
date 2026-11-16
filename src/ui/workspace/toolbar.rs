@@ -112,6 +112,7 @@ pub fn replay_tooltip(replay_open: bool, has_market: bool) -> &'static str {
 #[derive(Clone, Copy, PartialEq)]
 enum Menu {
     ChartType,
+    Intraday,
     Layout,
     Snapshot,
 }
@@ -134,6 +135,7 @@ pub fn show(ui: &mut Ui, input: &ToolbarInput) -> Vec<ToolbarAction> {
                     actions.push(ToolbarAction::SetChartType(picked));
                 }
             }
+            Menu::Intraday => intraday_popup(ui, response, input.timeframe, actions),
             Menu::Layout => layout_popup(ui, response, input, actions),
             Menu::Snapshot => {
                 match crate::ui::workspace::snapshot_menu::menu(ui, response, &input.snapshot) {
@@ -200,7 +202,36 @@ fn left_items(input: &ToolbarInput) -> Vec<Item> {
             .on_click(ToolbarAction::OpenIndicators),
     ));
     items.push(Item::Separator);
-    for timeframe in Timeframe::ALL {
+    let intraday = [
+        Timeframe::Min1,
+        Timeframe::Min3,
+        Timeframe::Min5,
+        Timeframe::Min15,
+        Timeframe::Min30,
+        Timeframe::Hour4,
+    ];
+    let intraday_selected = intraday.contains(&input.timeframe);
+    let mut intraday_btn = Button::new("intraday", "Minute and 4-hour candles");
+    intraday_btn.label = Some(if intraday_selected {
+        input.timeframe.label().to_owned()
+    } else {
+        "Min".to_owned()
+    });
+    intraday_btn.quiet = !intraday_selected;
+    intraday_btn.active = intraday_selected;
+    intraday_btn.weight = if intraday_selected { SEMIBOLD } else { MEDIUM };
+    intraday_btn.chevron = true;
+    intraday_btn.menu = Some(Menu::Intraday);
+    items.push(Item::Button(intraday_btn));
+
+    for timeframe in [
+        Timeframe::Hour,
+        Timeframe::Day,
+        Timeframe::Week,
+        Timeframe::Month,
+        Timeframe::Quarter,
+        Timeframe::Year,
+    ] {
         let selected = timeframe == input.timeframe;
         let mut button = Button::new(("timeframe", timeframe.label()), timeframe.description());
         button.label = Some(timeframe.label().to_owned());
@@ -312,6 +343,42 @@ fn right_items(input: &ToolbarInput) -> Vec<Item> {
 }
 
 /// The menu under the layout button: what can be done with the layout.
+fn intraday_popup(
+    ui: &Ui,
+    response: &egui::Response,
+    current: Timeframe,
+    actions: &mut Vec<ToolbarAction>,
+) {
+    let options = [
+        Timeframe::Min1,
+        Timeframe::Min3,
+        Timeframe::Min5,
+        Timeframe::Min15,
+        Timeframe::Min30,
+        Timeframe::Hour4,
+    ];
+    let items: Vec<(Timeframe, String)> = options
+        .into_iter()
+        .map(|tf| (tf, format!("{}  —  {}", tf.label(), tf.description())))
+        .collect();
+    let rows: Vec<(&str, Option<&str>)> = items.iter().map(|(_, s)| (s.as_str(), None)).collect();
+    kit::fitted_menu_rows(ui, response, egui::RectAlign::BOTTOM_START, &rows, |ui| {
+        for (tf, label) in &items {
+            let selected = *tf == current;
+            if kit::menu_item(
+                ui,
+                if selected { Icon::Check } else { Icon::Clock },
+                label,
+                true,
+                false,
+            ) {
+                actions.push(ToolbarAction::SetTimeframe(*tf));
+                ui.close();
+            }
+        }
+    });
+}
+
 fn layout_popup(
     ui: &mut Ui,
     response: &Response,

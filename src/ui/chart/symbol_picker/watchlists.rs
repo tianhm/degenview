@@ -46,6 +46,14 @@ fn market(item: &WatchlistInstrument) -> Option<SearchResult> {
             };
             SearchResult::new(source, symbol, id)
         }
+        DataSource::TqSdk => {
+            let symbol = if item.name.is_empty() || item.name == id {
+                id.to_owned()
+            } else {
+                format!("{id}{NAME_SEPARATOR}{}", item.name)
+            };
+            SearchResult::new(source, symbol, id)
+        }
         DataSource::DexScreener => {
             let title = item.display_name.as_deref().unwrap_or(&item.name);
             let result = SearchResult::new(source, title, id);

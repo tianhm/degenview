@@ -8,6 +8,7 @@ use crate::lock::lock;
 use crate::model::broker::venue::TradingVenue;
 use crate::ui;
 use crate::ui::broker::panel::BrokerPanelState;
+use crate::ui::futures::panel::FuturesPanelState;
 use crate::ui::paper::panel::PaperPanel;
 use crate::ui::trade::order_sheet::SheetState;
 use crate::workspace::{ChartWorkspace, WorkspaceAction};
@@ -31,6 +32,7 @@ pub(in crate::workspace) struct TradeSide {
     /// saved: a tab always starts on paper.
     venue: TradingVenue,
     broker_panel: BrokerPanelState,
+    futures_panel: FuturesPanelState,
     paper_panel: PaperPanel,
 }
 
@@ -112,8 +114,21 @@ impl ChartWorkspace {
                     };
                     let hub = self.trade.hub.clone();
                     let context = self.broker_panel_context();
-                    match (venue.broker(), hub, context) {
-                        (Some(_), Some(hub), Some(context)) => {
+                    match (venue, hub, context) {
+                        (TradingVenue::TqSdk, Some(hub), _) => {
+                            let Some(backend) = hub.backend(venue) else {
+                                return Vec::new();
+                            };
+                            let stats = backend.stats();
+                            crate::ui::futures::panel::ui(
+                                ui,
+                                &mut self.trade.futures_panel,
+                                hub.futures(),
+                                &bar,
+                                stats.as_ref(),
+                            )
+                        }
+                        (TradingVenue::Broker(_), Some(hub), Some(context)) => {
                             let Some(backend) = hub.backend(venue) else {
                                 return Vec::new();
                             };

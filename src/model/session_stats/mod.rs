@@ -51,7 +51,13 @@ const DAY_MS: i64 = 86_400_000;
 pub fn bar_ms(timeframe: super::Timeframe) -> i64 {
     use crate::model::Timeframe;
     match timeframe {
+        Timeframe::Min1 => 60_000,
+        Timeframe::Min3 => 180_000,
+        Timeframe::Min5 => 300_000,
+        Timeframe::Min15 => 900_000,
+        Timeframe::Min30 => 1_800_000,
         Timeframe::Hour => 3_600_000,
+        Timeframe::Hour4 => 14_400_000,
         Timeframe::Day => DAY_MS,
         Timeframe::Week => 7 * DAY_MS,
         Timeframe::Month => 30 * DAY_MS,

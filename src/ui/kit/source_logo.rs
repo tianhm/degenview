@@ -13,6 +13,7 @@ fn source(source: DataSource) -> ImageSource<'static> {
             egui::include_image!("../../../assets/source_logos/dexscreener.png")
         }
         DataSource::Alpaca => egui::include_image!("../../../assets/source_logos/alpaca.png"),
+        DataSource::TqSdk => egui::include_image!("../../../assets/source_logos/tqsdk.svg"),
         DataSource::Polymarket => {
             egui::include_image!("../../../assets/source_logos/polymarket.png")
         }

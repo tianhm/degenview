@@ -134,6 +134,7 @@ pub enum McpSource {
     Coingecko,
     Dexscreener,
     Alpaca,
+    Tqsdk,
 }
 
 impl McpSource {
@@ -144,6 +145,7 @@ impl McpSource {
             Self::Coingecko => DataSource::CoinGecko,
             Self::Dexscreener => DataSource::DexScreener,
             Self::Alpaca => DataSource::Alpaca,
+            Self::Tqsdk => DataSource::TqSdk,
         }
     }
 }

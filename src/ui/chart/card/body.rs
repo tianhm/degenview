@@ -37,10 +37,10 @@ pub(super) fn symbol_info(symbol: &str, source: DataSource, chart_type: ChartTyp
         ticker: symbol.to_owned(),
         ticker_id: format!("{}:{}", source.watchlist_slug(), symbol),
         currency: "USD".to_owned(),
-        kind: if source == DataSource::Alpaca {
-            "stock"
-        } else {
-            "crypto"
+        kind: match source {
+            DataSource::Alpaca => "stock",
+            DataSource::TqSdk => "futures",
+            _ => "crypto",
         }
         .to_owned(),
         base_currency: None,

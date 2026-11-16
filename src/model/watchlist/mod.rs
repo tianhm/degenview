@@ -401,6 +401,15 @@ impl WatchlistInstrument {
                     };
                     (name, full_symbol.to_uppercase(), None)
                 }
+                DataSource::TqSdk => {
+                    let parts: Vec<&str> = symbol.split(" — ").collect();
+                    let name = if parts.len() > 1 {
+                        parts[1..].join(" — ")
+                    } else {
+                        symbol.to_owned()
+                    };
+                    (name, full_symbol.to_owned(), None)
+                }
                 DataSource::CoinGecko => {
                     let name = full_symbol
                         .split('-')

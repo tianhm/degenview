@@ -182,7 +182,8 @@ impl Chart {
             DataSource::Binance
             | DataSource::Coinbase
             | DataSource::CoinGecko
-            | DataSource::Alpaca => self.source.display_symbol(&self.symbol),
+            | DataSource::Alpaca
+            | DataSource::TqSdk => self.source.display_symbol(&self.symbol),
             DataSource::DexScreener => self.source.base_asset(&self.display_title()),
             DataSource::Polymarket | DataSource::Kalshi | DataSource::CoinMarketCap => {
                 String::new()

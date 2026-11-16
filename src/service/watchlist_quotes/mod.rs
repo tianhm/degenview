@@ -16,9 +16,7 @@ pub use book::WatchlistQuoteBook;
 pub use engine::Config;
 #[cfg(test)]
 pub use engine::Outcome;
-pub use provider::QuoteProvider;
-#[cfg(test)]
-pub use provider::{QuoteFailure, QuoteRequest};
+pub use provider::{QuoteFailure, QuoteProvider, QuoteRequest};
 
 use crate::model::InstrumentId;
 use crate::model::alert::AlertProviderHealth;

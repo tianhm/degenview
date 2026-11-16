@@ -65,6 +65,8 @@ pub enum Output {
     WatchlistCard(PortfolioCard),
     /// Open Settings on the Alpaca page; the picker stays open.
     OpenAlpacaSettings,
+    /// Open Settings on the TqSdk page; the picker stays open.
+    OpenTqSdkSettings,
 }
 
 /// What the picker was opened for.
@@ -181,8 +183,9 @@ pub struct SymbolPicker {
     /// The user's watchlists, fed by the workspace while the Watchlists tab shows.
     watchlists: Vec<WatchlistGroup>,
     needs_alpaca: bool,
-    /// The Alpaca notice's button was pressed.
-    settings_requested: bool,
+    needs_tqsdk: bool,
+    /// Which Settings page the notice button asked to open.
+    settings_requested: Option<Output>,
 }
 
 impl SymbolPicker {
@@ -215,7 +218,8 @@ impl SymbolPicker {
             select_all: false,
             watchlists: Vec::new(),
             needs_alpaca: false,
-            settings_requested: false,
+            needs_tqsdk: false,
+            settings_requested: None,
         }
     }
 
@@ -389,8 +393,8 @@ impl SymbolPicker {
             select_all(ctx, search_id, &self.query);
             self.select_all = false;
         }
-        if std::mem::take(&mut self.settings_requested) {
-            output = Some(Output::OpenAlpacaSettings);
+        if let Some(target) = self.settings_requested.take() {
+            output = Some(target);
         }
         if keys.close || clicked_outside {
             self.close();
@@ -535,7 +539,7 @@ impl SymbolPicker {
                 });
                 return Rows::of_items(items, head.as_deref());
             }
-            Scope::All | Scope::Stocks | Scope::Crypto => {}
+            Scope::All | Scope::Stocks | Scope::Futures | Scope::Crypto => {}
         }
         if !self.query.trim().is_empty() {
             return Rows::of(listing.results.clone(), None);
@@ -732,6 +736,12 @@ impl SymbolPicker {
                     self.needs_alpaca = true;
                     return None;
                 }
+                if result.source == DataSource::TqSdk
+                    && service::keychain::api_keys::tqsdk_credentials().is_none()
+                {
+                    self.needs_tqsdk = true;
+                    return None;
+                }
                 if self.mode != PickMode::Watchlist
                     && recents::record_recent(&mut self.recents, &result)
                     && let Ok(store) = self.store.lock()
@@ -793,6 +803,7 @@ impl SymbolPicker {
             self.search.edited();
             self.highlight = 0;
             self.needs_alpaca = false;
+            self.needs_tqsdk = false;
             self.added = None;
         }
 
@@ -1112,7 +1123,11 @@ impl SymbolPicker {
                 pos2(area.right() - (PADDING - 6.0) - 8.0, area.bottom() - 14.0),
             );
             if show_notice(ui, card, notice) {
-                self.settings_requested = true;
+                self.settings_requested = Some(if notice.tqsdk {
+                    Output::OpenTqSdkSettings
+                } else {
+                    Output::OpenAlpacaSettings
+                });
             }
         }
         let mut body = ui
@@ -1294,7 +1309,7 @@ impl SymbolPicker {
                 );
                 return;
             }
-            Scope::All | Scope::Stocks | Scope::Crypto | Scope::Predictions => {}
+            Scope::All | Scope::Stocks | Scope::Futures | Scope::Crypto | Scope::Predictions => {}
         }
         if empty_query {
             widgets::no_results(
@@ -1311,7 +1326,7 @@ impl SymbolPicker {
         } else if let Some((source, error)) = listing
             .errors
             .iter()
-            .find(|(source, _)| *source != DataSource::Alpaca)
+            .find(|(source, _)| !matches!(source, DataSource::Alpaca | DataSource::TqSdk))
         {
             widgets::no_results(
                 ui,
@@ -1333,9 +1348,33 @@ impl SymbolPicker {
         }
     }
 
-    /// What the card under the list says, when stocks cannot be searched or opened: Alpaca keys
-    /// are missing (the search said so, or a stock was picked without them) or its search failed.
+    /// What the card under the list says, when stocks or futures cannot be searched or opened.
     fn notice(&self, listing: &Listing) -> Option<Notice> {
+        let tqsdk_focus = self.scope == Scope::Futures
+            || self.venue == Some(DataSource::TqSdk)
+            || self.needs_tqsdk;
+        if tqsdk_focus {
+            let failure = listing
+                .errors
+                .iter()
+                .find(|(source, _)| *source == DataSource::TqSdk)
+                .map(|(_, error)| error);
+            return match failure {
+                Some(ProviderError::MissingTqSdkKey) => {
+                    Some(Notice::missing_tqsdk("Futures need a TqSdk account"))
+                }
+                Some(error) => Some(Notice {
+                    title: "Futures could not be searched",
+                    detail: error.to_string(),
+                    settings: false,
+                    tqsdk: true,
+                }),
+                None if self.needs_tqsdk => Some(Notice::missing_tqsdk(
+                    "Set up TqSdk to open a futures contract",
+                )),
+                None => None,
+            };
+        }
         let failure = listing
             .errors
             .iter()
@@ -1349,6 +1388,7 @@ impl SymbolPicker {
                 title: "Stocks could not be searched",
                 detail: error.to_string(),
                 settings: false,
+                tqsdk: false,
             }),
             None if self.needs_alpaca => Some(Notice::missing_key("Set up Alpaca to open a stock")),
             None => None,
@@ -1641,6 +1681,7 @@ struct Notice {
     title: &'static str,
     detail: String,
     settings: bool,
+    tqsdk: bool,
 }
 
 impl Notice {
@@ -1650,6 +1691,17 @@ impl Notice {
             detail: "Add your free Alpaca API keys in Settings to search and chart US stocks."
                 .to_owned(),
             settings: true,
+            tqsdk: false,
+        }
+    }
+
+    fn missing_tqsdk(title: &'static str) -> Self {
+        Self {
+            title,
+            detail: "Add your Shinny (快期) account in Settings to search and chart futures."
+                .to_owned(),
+            settings: true,
+            tqsdk: true,
         }
     }
 }

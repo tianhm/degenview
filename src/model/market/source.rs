@@ -10,6 +10,7 @@ pub enum DataSource {
     CoinGecko,
     DexScreener,
     Alpaca,
+    TqSdk,
     Polymarket,
     Kalshi,
     CoinMarketCap,
@@ -23,6 +24,7 @@ impl DataSource {
             Self::CoinGecko => "CoinGecko",
             Self::DexScreener => "DEXScreener",
             Self::Alpaca => "Alpaca (IEX)",
+            Self::TqSdk => "TqSdk",
             Self::Polymarket => "Polymarket",
             Self::Kalshi => "Kalshi",
             Self::CoinMarketCap => "CoinMarketCap",
@@ -37,6 +39,7 @@ impl DataSource {
             Self::CoinGecko => "COINGECKO",
             Self::DexScreener => "DEXSCREENER",
             Self::Alpaca => "ALPACA",
+            Self::TqSdk => "TQSDK",
             Self::Polymarket => "POLYMARKET",
             Self::Kalshi => "KALSHI",
             Self::CoinMarketCap => "CMC",
@@ -45,12 +48,13 @@ impl DataSource {
 
     /// The source a `watchlist_slug` names, in any case.
     pub fn from_watchlist_slug(slug: &str) -> Option<Self> {
-        const ALL: [DataSource; 8] = [
+        const ALL: [DataSource; 9] = [
             DataSource::Binance,
             DataSource::Coinbase,
             DataSource::CoinGecko,
             DataSource::DexScreener,
             DataSource::Alpaca,
+            DataSource::TqSdk,
             DataSource::Polymarket,
             DataSource::Kalshi,
             DataSource::CoinMarketCap,
@@ -69,7 +73,7 @@ impl DataSource {
     pub fn provides_volume(self) -> bool {
         matches!(
             self,
-            Self::Binance | Self::Coinbase | Self::DexScreener | Self::Alpaca
+            Self::Binance | Self::Coinbase | Self::DexScreener | Self::Alpaca | Self::TqSdk
         )
     }
 
@@ -119,9 +123,24 @@ impl DataSource {
                 .map(|(base, _)| base)
                 .filter(|base| base.len() > 1)
                 .unwrap_or(head),
+            Self::TqSdk => tqsdk_product(head),
             _ => head,
         }
         .to_owned()
+    }
+}
+
+fn tqsdk_product(upper_head: &str) -> &str {
+    let rest = upper_head
+        .strip_prefix("KQ.M@")
+        .or_else(|| upper_head.strip_prefix("KQ.I@"))
+        .unwrap_or(upper_head);
+    let after_dot = rest.split_once('.').map_or(rest, |(_, code)| code);
+    let product = after_dot.trim_end_matches(|c: char| c.is_ascii_digit());
+    if product.is_empty() {
+        upper_head
+    } else {
+        product
     }
 }
 
@@ -197,6 +216,9 @@ mod tests {
         assert_eq!(base(DataSource::Binance, "BTC/USDT"), "BTC");
         assert_eq!(base(DataSource::Coinbase, "btc-usd"), "BTC");
         assert_eq!(base(DataSource::Alpaca, "AAPL — Apple Inc."), "AAPL");
+        assert_eq!(base(DataSource::TqSdk, "SHFE.rb2610 — 螺纹钢2610"), "RB");
+        assert_eq!(base(DataSource::TqSdk, "KQ.m@SHFE.rb"), "RB");
+        assert_eq!(base(DataSource::TqSdk, "CFFEX.IF2612"), "IF");
         assert_eq!(base(DataSource::DexScreener, "PEPE/WETH"), "PEPE");
     }
 

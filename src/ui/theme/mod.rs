@@ -580,8 +580,56 @@ fn base_fonts() -> egui::FontDefinitions {
             }
         }
     }
+    add_cjk_fallback(&mut fonts);
     add_symbol_fallback(&mut fonts);
     fonts
+}
+
+/// Appends the platform's CJK and symbol fallback fonts to both `Proportional` and `Monospace`
+/// so Chinese futures names, notices, and UI labels never render as tofu squares.
+fn add_cjk_fallback(fonts: &mut egui::FontDefinitions) {
+    let candidates: &[(&str, &str)] = &[
+        // Windows
+        ("msyh", r"C:\Windows\Fonts\msyh.ttc"),
+        ("simhei", r"C:\Windows\Fonts\simhei.ttf"),
+        ("simsun", r"C:\Windows\Fonts\simsun.ttc"),
+        ("dengxian", r"C:\Windows\Fonts\Deng.ttf"),
+        ("segoe-symbol", r"C:\Windows\Fonts\seguisym.ttf"),
+        // macOS
+        ("pingfang", "/System/Library/Fonts/PingFang.ttc"),
+        ("hiragino-gb", "/System/Library/Fonts/Hiragino Sans GB.ttc"),
+        ("stheiti", "/System/Library/Fonts/STHeiti Light.ttc"),
+        // Linux
+        (
+            "noto-cjk-ot",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        ),
+        (
+            "noto-cjk",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        ),
+        (
+            "wqy-microhei",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        ),
+        ("wqy-zenhei", "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
+    ];
+
+    for (name, path) in candidates {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts.font_data.insert(
+                (*name).to_owned(),
+                std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+            );
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                fonts
+                    .families
+                    .entry(family)
+                    .or_default()
+                    .push((*name).to_owned());
+            }
+        }
+    }
 }
 
 /// The app's fonts without the editor's choice, read from the system once.
@@ -715,6 +763,26 @@ mod tests {
         assert_eq!(draws(true), Vec::<char>::new());
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_cjk_fallback_draws_chinese_characters() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        let mut output = ctx.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            let font = egui::FontId::new(14.0, family.clone());
+            let tofu = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, '\u{10FFFF}'));
+            for ch in "螺纹钢沪深开仓平仓".chars() {
+                let width = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, ch));
+                assert!(
+                    width > 0.0 && width != tofu,
+                    "missing glyph for {ch} in {family:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn math_alphanumerics_have_a_fallback_glyph_in_both_families() {
         if !std::path::Path::new("/System/Library/Fonts/Supplemental/STIXTwoMath.otf").exists() {
@@ -725,7 +793,7 @@ mod tests {
         let mut output = ctx.run_ui(Default::default(), |_| {});
         output.textures_delta.clear();
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            let font = egui::FontId::new(14.0, family);
+            let font = egui::FontId::new(14.0, family.clone());
             let width = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, '𝓑'));
             let missing = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, '\u{10FFFF}'));
             assert!(width > 0.0 && width != missing);
@@ -744,7 +812,7 @@ mod tests {
         let mut output = ctx.run_ui(Default::default(), |_| {});
         output.textures_delta.clear();
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            let font = egui::FontId::new(14.0, family);
+            let font = egui::FontId::new(14.0, family.clone());
             let missing = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, '\u{10FFFF}'));
             for digit in '₀'..='₉' {
                 let width = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, digit));

@@ -141,7 +141,7 @@ impl Outcome {
             .max_by_key(|failure| match failure {
                 QuoteFailure::RateLimited => 3,
                 QuoteFailure::Failed(_) | QuoteFailure::Rejected(_) => 2,
-                QuoteFailure::CredentialsMissing => 1,
+                QuoteFailure::CredentialsMissing | QuoteFailure::TqSdkCredentialsMissing => 1,
             })
     }
 }
@@ -561,9 +561,12 @@ impl Engine {
         }
         let source_answered = !outcome.quotes.is_empty();
         match outcome.worst_failure() {
-            Some(QuoteFailure::CredentialsMissing) => {
+            Some(
+                failure
+                @ (QuoteFailure::CredentialsMissing | QuoteFailure::TqSdkCredentialsMissing),
+            ) => {
                 state.next_allowed_ms = now + 60_000;
-                state.last_error = Some(QuoteFailure::CredentialsMissing.message());
+                state.last_error = Some(failure.message());
             }
             Some(failure) => {
                 let (low, high) = if matches!(failure, QuoteFailure::RateLimited) {
@@ -597,7 +600,8 @@ impl Engine {
                 updates.insert(
                     key.clone(),
                     match failure {
-                        QuoteFailure::CredentialsMissing => {
+                        QuoteFailure::CredentialsMissing
+                        | QuoteFailure::TqSdkCredentialsMissing => {
                             WatchlistQuote::unsupported(Some(failure.message()))
                         }
                         _ => self.fallback(key, Some(failure.message())),
@@ -707,12 +711,13 @@ impl Engine {
     }
 }
 
-const ALL_SOURCES: [DataSource; 8] = [
+const ALL_SOURCES: [DataSource; 9] = [
     DataSource::Binance,
     DataSource::Coinbase,
     DataSource::CoinGecko,
     DataSource::DexScreener,
     DataSource::Alpaca,
+    DataSource::TqSdk,
     DataSource::Polymarket,
     DataSource::Kalshi,
     DataSource::CoinMarketCap,

@@ -432,6 +432,9 @@ fn tab_walks_the_market_tabs_and_each_narrows_the_list() {
     assert_eq!(rig.names(), ["BTC — Grayscale Bitcoin Mini Trust"]);
     rig.key(Key::Tab, Modifiers::NONE);
     rig.settle();
+    assert_eq!(rig.picker.scope, Scope::Futures);
+    rig.key(Key::Tab, Modifiers::NONE);
+    rig.settle();
     assert_eq!(rig.picker.scope, Scope::Crypto);
     assert!(!rig.names().iter().any(|name| name.contains("Grayscale")));
     rig.key(Key::Tab, Modifiers::NONE);
@@ -542,6 +545,7 @@ fn the_watchlists_tab_is_the_last_tab_and_tab_wraps_to_all() {
     let mut rig = Rig::new(1100.0, "btc");
     for expected in [
         Scope::Stocks,
+        Scope::Futures,
         Scope::Crypto,
         Scope::Predictions,
         Scope::Dashboards,
@@ -1103,8 +1107,14 @@ fn comparing_offers_only_the_tabs_whose_markets_can_be_drawn_over_a_chart() {
         seen.push(rig.picker.scope);
     }
     assert_eq!(
-        seen[..4],
-        [Scope::Stocks, Scope::Crypto, Scope::Watchlists, Scope::All]
+        seen[..5],
+        [
+            Scope::Stocks,
+            Scope::Futures,
+            Scope::Crypto,
+            Scope::Watchlists,
+            Scope::All
+        ]
     );
 }
 

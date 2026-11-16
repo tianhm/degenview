@@ -2,6 +2,7 @@ pub mod alert;
 pub mod annotation;
 pub mod cache;
 pub mod editor_theme;
+pub mod futures;
 pub mod image;
 pub mod keychain;
 pub mod llm;
@@ -17,6 +18,7 @@ pub mod work_queue;
 
 pub use market::alpaca::test_connection as alpaca_test_connection;
 pub use market::error::ProviderError;
+pub use market::tqsdk::test_connection as tqsdk_test_connection;
 
 use crate::model::{DataSource, Kline, PmSeries};
 pub(crate) use market::candles::{fill_gaps, fold_calendar, next_bucket_start_ms, normalize};
@@ -182,6 +184,7 @@ pub fn for_source(source: DataSource) -> &'static dyn MarketSource {
         DataSource::CoinGecko => &market::coingecko::COINGECKO,
         DataSource::DexScreener => &market::dexscreener::DEXSCREENER,
         DataSource::Alpaca => &market::alpaca::ALPACA,
+        DataSource::TqSdk => &market::tqsdk::TQSDK,
         DataSource::Polymarket => &market::polymarket::POLYMARKET,
         DataSource::Kalshi => &market::kalshi::KALSHI,
         DataSource::CoinMarketCap => &market::cmc::COIN_MARKET_CAP,

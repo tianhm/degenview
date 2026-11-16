@@ -1,6 +1,7 @@
 pub mod alert;
 pub mod broker;
 pub mod editor_theme;
+pub mod futures;
 pub mod mcp;
 pub mod paper;
 pub mod pine;

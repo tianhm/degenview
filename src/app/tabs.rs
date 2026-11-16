@@ -119,6 +119,7 @@ pub(super) fn show_tab(
                         AppAction::OpenWatchlistInNewTab(item)
                     }
                     WorkspaceAction::OpenAlpacaSettings => AppAction::OpenAlpacaSettings,
+                    WorkspaceAction::OpenTqSdkSettings => AppAction::OpenTqSdkSettings,
                     WorkspaceAction::OpenBrokerSettings => AppAction::OpenBrokerSettings,
                     WorkspaceAction::OpenSnapshotSettings => AppAction::OpenSnapshotSettings,
                     WorkspaceAction::SetAlertState { id, state } => {

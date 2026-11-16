@@ -106,6 +106,12 @@ impl SettingsHost {
         self.open = true;
     }
 
+    /// Opens Settings on the TqSdk page (the symbol picker's "Open Settings").
+    pub fn open_tqsdk(&mut self) {
+        self.state.section = crate::ui::settings::window::SettingsSection::TqSdk;
+        self.open = true;
+    }
+
     /// Opens Settings on the Brokers page (the live trading panel's "Open Settings").
     pub fn open_brokers(&mut self) {
         self.state.section = crate::ui::settings::window::SettingsSection::Brokers;

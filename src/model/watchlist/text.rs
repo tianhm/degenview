@@ -31,12 +31,13 @@ const US_EXCHANGES: [&str; 7] = [
     "NYSEAMERICAN",
 ];
 
-const SOURCES: [DataSource; 8] = [
+const SOURCES: [DataSource; 9] = [
     DataSource::Binance,
     DataSource::Coinbase,
     DataSource::CoinGecko,
     DataSource::DexScreener,
     DataSource::Alpaca,
+    DataSource::TqSdk,
     DataSource::Polymarket,
     DataSource::Kalshi,
     DataSource::CoinMarketCap,
@@ -300,6 +301,7 @@ fn instrument_from(token: &str) -> Result<WatchlistInstrument, String> {
             Ok(item(source, &symbol, &symbol.replace('-', "/"), &symbol))
         }
         DataSource::Alpaca => stock(&rest),
+        DataSource::TqSdk => tqsdk_futures(&rest),
         DataSource::CoinGecko => {
             let id = rest.to_lowercase();
             let name = id
@@ -371,6 +373,22 @@ fn stock(symbol: &str) -> Result<WatchlistInstrument, String> {
         return Err("Not a US stock ticker".to_owned());
     }
     Ok(item(DataSource::Alpaca, &upper, &upper, &upper))
+}
+
+fn tqsdk_futures(symbol: &str) -> Result<WatchlistInstrument, String> {
+    let trimmed = symbol.trim();
+    let valid = trimmed.contains('.')
+        && (4..=32).contains(&trimmed.len())
+        && trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '@' | '_' | '-'));
+    if !valid {
+        return Err(
+            "TqSdk contracts are written EXCHANGE.contract (like SHFE.rb2610 or KQ.m@SHFE.rb)"
+                .to_owned(),
+        );
+    }
+    Ok(item(DataSource::TqSdk, trimmed, trimmed, trimmed))
 }
 
 fn item(source: DataSource, symbol: &str, name: &str, label: &str) -> WatchlistInstrument {

@@ -97,13 +97,19 @@ fn a_new_profile_has_no_venue_enabled_and_lists_every_one_to_choose_from() {
         vec![
             TradingVenue::Paper,
             TradingVenue::Broker(COINBASE),
-            TradingVenue::Broker(SANDBOX)
+            TradingVenue::Broker(SANDBOX),
+            TradingVenue::TqSdk
         ]
     );
     let kinds: Vec<VenueKind> = hub.infos().iter().map(|info| info.kind).collect();
     assert_eq!(
         kinds,
-        vec![VenueKind::Simulated, VenueKind::Live, VenueKind::Test],
+        vec![
+            VenueKind::Simulated,
+            VenueKind::Live,
+            VenueKind::Test,
+            VenueKind::Test,
+        ],
         "the sandbox is not real money"
     );
     // Nothing was created behind the user's back.

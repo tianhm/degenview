@@ -2,6 +2,7 @@
 //! chart, the symbol picker and MCP show; code decides on the variant, never on the text.
 
 use super::alpaca::MISSING_KEY;
+use super::tqsdk::MISSING_KEY as MISSING_TQSDK_KEY;
 use crate::service::net::http;
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -12,6 +13,9 @@ pub enum ProviderError {
     /// The same for Alpaca, whose failures name it: they are usually its keys.
     #[error("Alpaca error: {0}")]
     Alpaca(http::Error),
+    /// The same for TqSdk, whose failures name it: they are usually its Shinny account credentials.
+    #[error("TqSdk error: {0}")]
+    TqSdk(http::Error),
     /// The same for CoinMarketCap, whose failures name it: they are usually its key or plan.
     #[error("CoinMarketCap error: {0}")]
     CoinMarketCap(http::Error),
@@ -21,6 +25,9 @@ pub enum ProviderError {
     /// No Alpaca keys are saved, so stocks can be neither searched nor charted.
     #[error("{MISSING_KEY}")]
     MissingKey,
+    /// No TqSdk (Shinny) credentials are saved, so Chinese futures can be neither searched nor charted.
+    #[error("{MISSING_TQSDK_KEY}")]
+    MissingTqSdkKey,
     /// The provider has nothing for this market, interval or range, or refused it in its own words.
     #[error("{0}")]
     Other(String),
@@ -42,6 +49,7 @@ impl ProviderError {
             self,
             Self::Network(http::Error::Status(429))
                 | Self::Alpaca(http::Error::Status(429))
+                | Self::TqSdk(http::Error::Status(429))
                 | Self::CoinMarketCap(http::Error::Status(429))
         )
     }

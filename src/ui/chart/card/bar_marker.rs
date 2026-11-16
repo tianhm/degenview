@@ -34,7 +34,16 @@ pub enum Scrolled {
 pub fn marker_label(open_time_ms: i64, timeframe: Option<Timeframe>) -> String {
     let full = format::timestamp(open_time_ms);
     match timeframe {
-        Some(Timeframe::Hour) | None => full,
+        Some(
+            Timeframe::Min1
+            | Timeframe::Min3
+            | Timeframe::Min5
+            | Timeframe::Min15
+            | Timeframe::Min30
+            | Timeframe::Hour
+            | Timeframe::Hour4,
+        )
+        | None => full,
         Some(_) => full.split(' ').next().unwrap_or(&full).to_owned(),
     }
 }

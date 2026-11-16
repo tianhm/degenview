@@ -66,7 +66,9 @@ watchlists.
 - `service::image::icon` keys by `"<source>:<ticker>"`, never chart id: static CDN (unthrottled HEAD), then
   rate-limited CoinGecko search, then a letter monogram.
 - One `BinanceLiveFeed` per workspace: updates the forming candle, reconnects with backoff. A
-  current-or-newer WebSocket bar beats an older REST snapshot.
+  current-or-newer WebSocket bar beats an older REST snapshot. Binance public REST and the live
+  kline socket use the market-data-only hosts (`data-api.binance.vision`,
+  `data-stream.binance.vision`): `api.binance.com` answers HTTP 451 in restricted regions.
 - Visible watchlists share one Coinbase ticker socket (last trade, 24-hour open, volume); Coinbase
   has no candle channel.
 

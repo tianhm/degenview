@@ -42,6 +42,11 @@ impl Granularity {
                 target_secs: 60,
                 per_target: 1,
             }),
+            "3m" => Some(Granularity {
+                source_secs: 60,
+                target_secs: 180,
+                per_target: 3,
+            }),
             "5m" => Some(Granularity {
                 source_secs: 300,
                 target_secs: 300,

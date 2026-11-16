@@ -3,10 +3,16 @@
 //! CoinMarketCap connection test happen here, since the stores are process-wide, but every rule
 //! (what may be saved, what the status says) is a plain function tested against in-memory stores.
 
+use std::sync::Arc;
+
+use crate::host::futures::FuturesConnection;
+use crate::host::trading::TradingHub;
 use crate::model::DataSource;
+use crate::model::broker::venue::TradingVenue;
 use crate::service::ProviderError;
 use crate::service::keychain::api_keys::{
-    AlpacaCredentials, AlpacaCredentialsStore, CoinMarketCapKeyStore,
+    AlpacaCredentials, AlpacaCredentialsStore, CoinMarketCapKeyStore, TqSdkCredentials,
+    TqSdkCredentialsStore, TqSdkTradeCredentials, TqSdkTradeCredentialsStore,
 };
 use crate::service::work_queue::{self, Pending};
 use crate::ui::icons::{self, Icon};
@@ -40,8 +46,92 @@ pub struct CmcForm {
 }
 
 #[derive(Default)]
+pub struct TqSdkForm {
+    pub username: String,
+    pub password: String,
+    loaded: bool,
+    pub is_saved: bool,
+    pub status: Option<StatusMessage>,
+    test: Option<Pending<Result<(), ProviderError>>>,
+    autosave: Autosave,
+}
+
+#[derive(Default)]
+pub struct TqSdkTradeForm {
+    pub broker_id: String,
+    pub account_id: String,
+    pub password: String,
+    loaded: bool,
+    pub is_saved: bool,
+    pub status: Option<StatusMessage>,
+    autosave: Autosave,
+}
+
+impl TqSdkTradeForm {
+    pub fn load(&mut self, store: &TqSdkTradeCredentialsStore) {
+        if self.loaded {
+            return;
+        }
+        self.loaded = true;
+        self.is_saved = store.is_configured();
+        if self.is_saved {
+            let saved = store.credentials();
+            self.broker_id = saved.broker_id;
+            self.account_id = saved.account_id;
+            self.password = saved.password;
+        } else if self.broker_id.is_empty() {
+            self.broker_id = "快期模拟".to_owned();
+        }
+    }
+
+    pub fn can_save(&self) -> bool {
+        !self.broker_id.trim().is_empty()
+            && !self.account_id.trim().is_empty()
+            && !self.password.trim().is_empty()
+    }
+
+    pub fn credentials(&self) -> TqSdkTradeCredentials {
+        TqSdkTradeCredentials {
+            broker_id: self.broker_id.trim().to_owned(),
+            account_id: self.account_id.trim().to_owned(),
+            password: self.password.trim().to_owned(),
+        }
+    }
+
+    pub fn save_only(&mut self, store: &TqSdkTradeCredentialsStore) {
+        if !self.can_save() {
+            return;
+        }
+        let creds = self.credentials();
+        match store.save(&creds) {
+            Ok(()) => {
+                self.is_saved = true;
+                self.status = Some(StatusMessage::ok("Futures trade credentials saved."));
+            }
+            Err(error) => {
+                self.status = Some(StatusMessage::error(format!("Could not save: {error}")));
+            }
+        }
+    }
+
+    pub fn remove(&mut self, store: &TqSdkTradeCredentialsStore) {
+        self.status = Some(match store.save(&TqSdkTradeCredentials::default()) {
+            Ok(()) => {
+                self.is_saved = false;
+                self.account_id.clear();
+                self.password.clear();
+                StatusMessage::ok("Futures trade account removed.")
+            }
+            Err(error) => StatusMessage::error(format!("Could not remove: {error}")),
+        });
+    }
+}
+
+#[derive(Default)]
 pub struct ApiKeysState {
     pub alpaca: AlpacaForm,
+    pub tqsdk: TqSdkForm,
+    pub tqsdk_trade: TqSdkTradeForm,
     pub cmc: CmcForm,
 }
 
@@ -125,6 +215,88 @@ impl AlpacaForm {
                 StatusMessage::ok("Keys removed. Stock charts need keys to load.")
             }
             Err(error) => StatusMessage::error(format!("Could not remove the keys: {}", error.0)),
+        });
+    }
+}
+
+// MARK: TqSdk rules
+
+impl TqSdkForm {
+    pub fn load(&mut self, store: &TqSdkCredentialsStore) {
+        if self.loaded {
+            return;
+        }
+        self.loaded = true;
+        self.is_saved = store.is_configured();
+        if self.is_saved {
+            let saved = store.credentials();
+            self.username = saved.username;
+            self.password = saved.password;
+        }
+    }
+
+    pub fn can_save(&self) -> bool {
+        !self.username.trim().is_empty() && !self.password.trim().is_empty()
+    }
+
+    pub fn badge(&self) -> (&'static str, Tone) {
+        if self.is_saved {
+            ("Account saved", Tone::Good)
+        } else {
+            ("Not configured", Tone::Neutral)
+        }
+    }
+
+    pub fn save(&mut self, store: &TqSdkCredentialsStore) {
+        let credentials = TqSdkCredentials {
+            username: self.username.clone(),
+            password: self.password.clone(),
+        };
+        self.status = Some(match store.save(&credentials) {
+            Ok(()) => {
+                self.is_saved = true;
+                StatusMessage::ok(crate::platform::saved_securely())
+            }
+            Err(error) => StatusMessage::error(format!("Could not save: {}", error.0)),
+        });
+    }
+
+    pub fn is_testing(&self) -> bool {
+        self.test.is_some()
+    }
+
+    pub fn start_test(
+        &mut self,
+        repaint: Option<&egui::Context>,
+        test: impl FnOnce(String, String) -> Result<(), ProviderError> + Send + 'static,
+    ) {
+        if self.test.is_some() {
+            return;
+        }
+        self.status = None;
+        let (username, password) = (self.username.clone(), self.password.clone());
+        self.test = Some(work_queue::start_for(
+            DataSource::TqSdk,
+            repaint,
+            move || test(username, password),
+        ));
+    }
+
+    pub fn poll_test(&mut self) {
+        take_test_answer(&mut self.test, &mut self.status);
+    }
+
+    pub fn remove(&mut self, store: &TqSdkCredentialsStore) {
+        self.status = Some(match store.save(&TqSdkCredentials::default()) {
+            Ok(()) => {
+                self.username.clear();
+                self.password.clear();
+                self.is_saved = false;
+                StatusMessage::ok("Account removed. Futures charts need a TqSdk account to load.")
+            }
+            Err(error) => {
+                StatusMessage::error(format!("Could not remove the account: {}", error.0))
+            }
         });
     }
 }
@@ -360,6 +532,187 @@ pub fn alpaca_body(ui: &mut egui::Ui, state: &mut ApiKeysState, store: &AlpacaCr
             );
         });
     });
+}
+
+pub fn tqsdk_body(
+    ui: &mut egui::Ui,
+    state: &mut ApiKeysState,
+    store: &TqSdkCredentialsStore,
+    trading_hub: Option<&Arc<TradingHub>>,
+) {
+    let form = &mut state.tqsdk;
+    form.load(store);
+    form.poll_test();
+    if form.is_testing() {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(150));
+    }
+    let (text, tone) = form.badge();
+    kit::status_badge(ui, text, tone);
+    ui.add_space(18.0);
+    section(ui, "Shinny (快期) account", None, |ui| {
+        card(ui, |ui| {
+            ui.vertical(|ui| {
+                let user = field(
+                    ui,
+                    "Shinny Username",
+                    None,
+                    "your-id",
+                    &mut form.username,
+                    false,
+                );
+                form.autosave.watch(&user, false);
+                ui.add_space(12.0);
+                let pass = field(
+                    ui,
+                    "Password",
+                    Some(crate::platform::credential_stored_hint()),
+                    "",
+                    &mut form.password,
+                    true,
+                );
+                form.autosave.watch(&pass, true);
+            });
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                if form.is_testing() {
+                    ui.add(LoadingIndicator::new().size(14.0));
+                } else if kit::sheet_button(ui, "Test Connection", false, form.can_save()).clicked()
+                {
+                    form.start_test(Some(ui.ctx()), |user, pass| {
+                        crate::service::tqsdk_test_connection(&user, &pass)
+                    });
+                }
+                if form.is_saved && destructive_button(ui, "Remove Account").clicked() {
+                    form.remove(store);
+                    form.autosave.cancel();
+                }
+            });
+        });
+        if let Some(status) = &form.status {
+            ui.add_space(8.0);
+            status_message(ui, &status.text, status.is_error);
+        }
+    });
+    if form.autosave.due(ui.ctx()) && form.can_save() {
+        form.save(store);
+    }
+
+    tqsdk_trade_section(ui, &mut state.tqsdk_trade, trading_hub);
+
+    section(ui, "Getting your account", None, |ui| {
+        card(ui, |ui| {
+            step(ui, 1, "Register a Shinny (快期 / 天勤量化) account.");
+            step(
+                ui,
+                2,
+                "Enter your Shinny username and password above to unlock SHFE, DCE, CZCE, CFFEX, INE and GFEX futures.",
+            );
+            link(ui, "Open Shinny Tech", "https://www.shinnytech.com/tqsdk/");
+        });
+    });
+}
+
+fn tqsdk_trade_section(
+    ui: &mut egui::Ui,
+    trade_form: &mut TqSdkTradeForm,
+    trading_hub: Option<&Arc<TradingHub>>,
+) {
+    let trade_store = TqSdkTradeCredentialsStore::shared();
+    trade_form.load(trade_store);
+
+    section(
+        ui,
+        "Futures trade account",
+        Some("Optional: connect a SimNow (快期模拟) or supported futures broker account to trade."),
+        |ui| {
+            card(ui, |ui| {
+                ui.vertical(|ui| {
+                    let broker = field(
+                        ui,
+                        "Broker ID",
+                        None,
+                        "快期模拟",
+                        &mut trade_form.broker_id,
+                        false,
+                    );
+                    trade_form.autosave.watch(&broker, false);
+                    ui.add_space(12.0);
+                    let account = field(
+                        ui,
+                        "Account ID",
+                        None,
+                        "your-futures-account",
+                        &mut trade_form.account_id,
+                        false,
+                    );
+                    trade_form.autosave.watch(&account, false);
+                    ui.add_space(12.0);
+                    let pass = field(
+                        ui,
+                        "Trade Password",
+                        Some(crate::platform::credential_stored_hint()),
+                        "",
+                        &mut trade_form.password,
+                        true,
+                    );
+                    trade_form.autosave.watch(&pass, true);
+                });
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    let conn = trading_hub.map(|hub| hub.futures().connection());
+                    if matches!(conn, Some(FuturesConnection::Connecting)) {
+                        ui.add(LoadingIndicator::new().size(14.0));
+                    } else if kit::sheet_button(ui, "Connect", false, trade_form.can_save())
+                        .clicked()
+                    {
+                        let creds = trade_form.credentials();
+                        if let Some(hub) = trading_hub {
+                            match hub.futures().save_and_connect(creds) {
+                                Ok(()) => {
+                                    trade_form.is_saved = true;
+                                    trade_form.status = None;
+                                    hub.enable(TradingVenue::TqSdk);
+                                }
+                                Err(err) => {
+                                    trade_form.status = Some(StatusMessage::error(err));
+                                }
+                            }
+                        } else {
+                            trade_form.save_only(trade_store);
+                        }
+                    }
+                    if trade_form.is_saved && destructive_button(ui, "Disconnect").clicked() {
+                        if let Some(hub) = trading_hub {
+                            let _ = hub.disable(TradingVenue::TqSdk);
+                        }
+                        trade_form.remove(trade_store);
+                        trade_form.autosave.cancel();
+                    }
+                });
+            });
+            if let Some(hub) = trading_hub {
+                match hub.futures().connection() {
+                    FuturesConnection::Connected => {
+                        ui.add_space(8.0);
+                        status_message(ui, "Futures trade session connected.", false);
+                    }
+                    FuturesConnection::Failed(reason) => {
+                        ui.add_space(8.0);
+                        status_message(ui, &reason, true);
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(status) = &trade_form.status {
+                ui.add_space(8.0);
+                status_message(ui, &status.text, status.is_error);
+            }
+        },
+    );
+    if trade_form.autosave.due(ui.ctx()) && trade_form.can_save() {
+        trade_form.save_only(trade_store);
+    }
 }
 
 pub fn coinmarketcap_body(

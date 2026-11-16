@@ -25,12 +25,13 @@ const RELATED_LIMIT: usize = 6;
 
 /// The markets the picker lists, in the order the providers are asked (and so the order exchanges
 /// that list the same market appear in).
-pub const PROVIDERS: [DataSource; 5] = [
+pub const PROVIDERS: [DataSource; 6] = [
     DataSource::Binance,
     DataSource::Coinbase,
     DataSource::DexScreener,
     DataSource::CoinGecko,
     DataSource::Alpaca,
+    DataSource::TqSdk,
 ];
 
 /// The prediction markets the Predictions tab asks, in the order their answers are listed.
@@ -39,9 +40,10 @@ pub const PREDICTION_PROVIDERS: [DataSource; 2] = [DataSource::Polymarket, DataS
 /// What the market tabs narrow the list to.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Scope {
-    /// Crypto and stocks together.
+    /// Crypto, stocks and futures together.
     All,
     Stocks,
+    Futures,
     Crypto,
     /// Polymarket and Kalshi: events with their choices.
     Predictions,
@@ -52,9 +54,10 @@ pub enum Scope {
 }
 
 impl Scope {
-    pub const TABS: [Self; 6] = [
+    pub const TABS: [Self; 7] = [
         Self::All,
         Self::Stocks,
+        Self::Futures,
         Self::Crypto,
         Self::Predictions,
         Self::Dashboards,
@@ -65,6 +68,7 @@ impl Scope {
         match self {
             Self::All => "All",
             Self::Stocks => "Stocks",
+            Self::Futures => "Futures",
             Self::Crypto => "Crypto",
             Self::Predictions => "Predictions",
             Self::Dashboards => "Dashboards",
@@ -76,7 +80,11 @@ impl Scope {
         match self {
             Self::All | Self::Watchlists => PROVIDERS.contains(&source),
             Self::Stocks => source == DataSource::Alpaca,
-            Self::Crypto => PROVIDERS.contains(&source) && source != DataSource::Alpaca,
+            Self::Futures => source == DataSource::TqSdk,
+            Self::Crypto => {
+                PROVIDERS.contains(&source)
+                    && !matches!(source, DataSource::Alpaca | DataSource::TqSdk)
+            }
             Self::Predictions => PREDICTION_PROVIDERS.contains(&source),
             Self::Dashboards => source == DataSource::CoinMarketCap,
         }
@@ -123,6 +131,7 @@ impl Scope {
             Self::Predictions => "Search markets (e.g. Bitcoin, Fed, election)",
             Self::Dashboards => "Filter indices and portfolio views",
             Self::Watchlists => "Filter your watchlists",
+            Self::Futures => "Search futures (e.g. rb, IF, 螺纹钢)…",
             Self::All | Self::Stocks | Self::Crypto => "Search symbol…",
         }
     }
@@ -145,6 +154,7 @@ pub fn popular() -> Vec<SearchResult> {
 pub fn market_kind(source: DataSource) -> &'static str {
     match source {
         DataSource::Alpaca => "Stock",
+        DataSource::TqSdk => "Futures",
         DataSource::Polymarket | DataSource::Kalshi => "Prediction",
         DataSource::CoinMarketCap => "Index",
         _ => "Crypto",
@@ -158,6 +168,7 @@ pub fn trading_kind(source: DataSource) -> &'static str {
         DataSource::DexScreener => "DEX",
         DataSource::CoinGecko => "Aggregate",
         DataSource::Alpaca => "Stock",
+        DataSource::TqSdk => "Futures",
         _ => "",
     }
 }
@@ -346,7 +357,9 @@ impl Related {
             found.insert(asset.clone(), answer);
             false
         });
-        if !PROVIDERS.contains(&of.source) || of.source == DataSource::Alpaca {
+        if !PROVIDERS.contains(&of.source)
+            || matches!(of.source, DataSource::Alpaca | DataSource::TqSdk)
+        {
             return Some(Vec::new());
         }
         let asset = of.base_asset();
@@ -420,10 +433,16 @@ mod tests {
     fn a_mode_offers_only_the_tabs_it_can_use() {
         assert_eq!(Scope::tabs(PickMode::Chart), Scope::TABS);
         assert_eq!(Scope::tabs(PickMode::Add), Scope::TABS);
-        // A market compared over a chart is a crypto or stock market.
+        // A market compared over a chart is a stock, futures or crypto market.
         assert_eq!(
             Scope::tabs(PickMode::Compare),
-            [Scope::All, Scope::Stocks, Scope::Crypto, Scope::Watchlists]
+            [
+                Scope::All,
+                Scope::Stocks,
+                Scope::Futures,
+                Scope::Crypto,
+                Scope::Watchlists
+            ]
         );
         // A watchlist's own markets are already in the sidebar being added to.
         assert!(!Scope::tabs(PickMode::Watchlist).contains(&Scope::Watchlists));
@@ -472,6 +491,7 @@ mod tests {
             DataSource::Coinbase,
             DataSource::DexScreener,
             DataSource::CoinGecko,
+            DataSource::TqSdk,
         ] {
             search
                 .answers

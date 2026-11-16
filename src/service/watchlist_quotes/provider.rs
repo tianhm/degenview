@@ -22,6 +22,7 @@ pub struct QuoteRequest {
 pub enum QuoteFailure {
     RateLimited,
     CredentialsMissing,
+    TqSdkCredentialsMissing,
     /// The provider refused the request itself, as it does for an unknown symbol.
     /// Retrying a smaller batch can find which symbol it was.
     Rejected(String),
@@ -35,6 +36,9 @@ impl QuoteFailure {
             Self::RateLimited => "Rate limited by the provider".to_owned(),
             Self::CredentialsMissing => {
                 "Add your Alpaca API key in Settings to see stock quotes".to_owned()
+            }
+            Self::TqSdkCredentialsMissing => {
+                "Add your TqSdk account in Settings to see futures quotes".to_owned()
             }
             Self::Rejected(message) | Self::Failed(message) => message.clone(),
         }
@@ -63,6 +67,7 @@ pub fn chunk_size(source: DataSource) -> usize {
         DataSource::CoinGecko => 250,
         DataSource::Coinbase => 20,
         DataSource::DexScreener => 30,
+        DataSource::TqSdk => 50,
         _ => 100,
     }
 }
@@ -89,6 +94,9 @@ impl QuoteProvider for LiveProvider {
             DataSource::CoinGecko => coingecko(requests).map(Outcome::from_quotes),
             DataSource::DexScreener => Ok(dexscreener(requests)),
             DataSource::Alpaca => alpaca(requests).map(Outcome::from_quotes),
+            DataSource::TqSdk => {
+                crate::service::market::tqsdk::quotes(requests).map(Outcome::from_quotes)
+            }
             DataSource::Polymarket | DataSource::Kalshi => Ok(prediction(source, requests)),
             DataSource::CoinMarketCap => Ok(Outcome::default()),
         }
@@ -146,7 +154,7 @@ pub fn binance_url(requests: &[QuoteRequest]) -> String {
         .map(|request| format!("%22{}%22", request.symbol.to_uppercase()))
         .collect::<Vec<_>>()
         .join("%2C");
-    format!("https://api.binance.com/api/v3/ticker/24hr?symbols=%5B{list}%5D&type=MINI")
+    format!("https://data-api.binance.vision/api/v3/ticker/24hr?symbols=%5B{list}%5D&type=MINI")
 }
 
 fn binance(requests: &[QuoteRequest]) -> Result<HashMap<String, SourceQuote>, QuoteFailure> {
@@ -696,7 +704,7 @@ mod tests {
         let url = binance_url(&[request("btcusdt"), request("ETHUSDT")]);
         assert_eq!(
             url,
-            "https://api.binance.com/api/v3/ticker/24hr?symbols=%5B%22BTCUSDT%22%2C%22ETHUSDT%22%5D&type=MINI"
+            "https://data-api.binance.vision/api/v3/ticker/24hr?symbols=%5B%22BTCUSDT%22%2C%22ETHUSDT%22%5D&type=MINI"
         );
         assert!(!url.contains(['[', ']', '"']), "only URL-safe characters");
     }

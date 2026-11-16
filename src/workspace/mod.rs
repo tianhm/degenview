@@ -10,7 +10,7 @@ use crate::model::{
     BuiltIn, ChartColumn, ChartSyncSettings, DataSource, Drawing, DrawingCommand, InstrumentId,
     Timeframe,
 };
-use crate::service::market::live::BinanceLiveFeed;
+use crate::service::market::live::{BinanceLiveFeed, TqSdkLiveFeed};
 use crate::service::watchlist_quotes::{WatchlistQuoteBook, WatchlistQuoteCoordinator};
 use crate::store::SharedStore;
 use crate::store::watchlist::WatchlistStore;
@@ -86,6 +86,8 @@ pub enum WorkspaceAction {
     OpenWebhookSettings,
     /// Open Settings on the Alpaca page (the symbol picker's "Stocks need an Alpaca key" notice).
     OpenAlpacaSettings,
+    /// Open Settings on the TqSdk page (the symbol picker's "Futures need a TqSdk account" notice).
+    OpenTqSdkSettings,
     /// Open Settings on the Brokers page (the live trading panel).
     OpenBrokerSettings,
     /// Open Settings on the Snapshots page (the camera menu's "Configure Snapshots…").
@@ -163,6 +165,7 @@ pub struct ChartWorkspace {
     /// How portfolio cards reach the app's portfolios; set by the window that draws this tab.
     card_env: Option<PortfolioCardEnv>,
     live_feed: Option<BinanceLiveFeed>,
+    tqsdk_live_feed: Option<TqSdkLiveFeed>,
     /// The candles of every overlay market on this workspace's charts, fetched once per market.
     overlay_hub: overlay::OverlayHub,
     settings_chart: Option<u64>,
@@ -300,6 +303,7 @@ impl ChartWorkspace {
             symbol_picker: SymbolPicker::new(store.clone()),
             card_env: None,
             live_feed: None,
+            tqsdk_live_feed: None,
             overlay_hub: overlay::OverlayHub::new(),
             settings_chart: None,
             script_popover: None,

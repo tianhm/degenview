@@ -433,6 +433,7 @@ fn status_line(ui: &Ui, at: Pos2, result: &SearchResult, quote: Option<&Watchlis
             Some(Freshness::MarketClosed) => ("Market closed", false),
             _ => return 0.0,
         },
+        DataSource::TqSdk => ("Futures", true),
         _ => ("Open 24/7", true),
     };
     let galley = kit::galley(
@@ -494,7 +495,8 @@ fn change_color(change: f64) -> Color32 {
 
 /// Whether a price is quoted to the cent: a share, or anything from a thousand up.
 fn in_cents(source: DataSource, price: f64) -> bool {
-    price.abs() >= 1_000.0 || (source == DataSource::Alpaca && price.abs() >= 1.0)
+    price.abs() >= 1_000.0
+        || (matches!(source, DataSource::Alpaca | DataSource::TqSdk) && price.abs() >= 1.0)
 }
 
 /// A price as the app writes one, but to the cent for a share (`228.40`, not `228.4000`).

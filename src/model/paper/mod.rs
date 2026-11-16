@@ -241,6 +241,8 @@ impl PaperInstrument {
     ) -> Self {
         let asset_class = if source == DataSource::Alpaca {
             PaperAssetClass::Stock
+        } else if source == DataSource::TqSdk {
+            PaperAssetClass::Futures
         } else if source.is_prediction_market() {
             PaperAssetClass::Prediction
         } else {
@@ -248,14 +250,15 @@ impl PaperInstrument {
         };
         let tick_size = match source {
             DataSource::Polymarket => 0.001,
-            DataSource::Kalshi => 0.01,
+            DataSource::Kalshi | DataSource::TqSdk => 0.01,
             _ => 0.000_000_01,
         };
-        let (minimum_quantity, quantity_increment) = if source == DataSource::Alpaca {
-            (1.0, 1.0)
-        } else {
-            (0.000_000_01, 0.000_000_01)
-        };
+        let (minimum_quantity, quantity_increment) =
+            if matches!(source, DataSource::Alpaca | DataSource::TqSdk) {
+                (1.0, 1.0)
+            } else {
+                (0.000_000_01, 0.000_000_01)
+            };
         let symbol = symbol.into();
         Self {
             key: format!("{}:{}", source.display_name(), symbol),
