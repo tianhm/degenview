@@ -7,6 +7,7 @@ pub mod editor_appearance;
 pub mod futures;
 pub mod icons;
 pub mod kit;
+pub mod market_flow;
 pub mod mcp;
 pub mod paper;
 pub mod pine;

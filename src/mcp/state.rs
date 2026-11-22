@@ -4,6 +4,7 @@
 //! Every request reads this fresh, so revoking a credential or changing a permission takes
 //! effect on the very next request. Nothing here knows about HTTP or egui.
 
+use crate::clock::now_ms;
 use crate::lock::{lock, read, write};
 use crate::mcp::audit::AuditQueue;
 use crate::mcp::transport::cancel::CallRegistry;
@@ -11,7 +12,6 @@ use crate::mcp::transport::limits::{RateLimiter, RateLimits};
 use crate::model::DataSource;
 use crate::model::InstrumentId;
 use crate::model::mcp::{McpClient, Peer, Permission, PermissionSet};
-use crate::model::watchlist::now_ms;
 use crate::service::watchlist_quotes::{WatchlistQuoteBook, WatchlistQuoteCoordinator};
 use crate::service::{ProviderError, SearchResult};
 use crate::store::scripts::ScriptStore;
@@ -28,10 +28,15 @@ pub type ScriptLocator = Box<dyn Fn() -> Option<ScriptStore> + Send + Sync>;
 pub type MarketSearch =
     Arc<dyn Fn(DataSource, &str) -> Result<Vec<SearchResult>, ProviderError> + Send + Sync>;
 
-/// Fetches candles from a provider: `(source, symbol, interval token, limit)`. Replaceable so
+/// Fetches candles from a provider: `(source, symbol, timeframe, limit)`. Replaceable so
 /// tests never reach the network.
 pub type CandleFetch = Arc<
-    dyn Fn(DataSource, &str, &str, u32) -> Result<Vec<crate::model::Kline>, ProviderError>
+    dyn Fn(
+            DataSource,
+            &str,
+            crate::model::Timeframe,
+            u32,
+        ) -> Result<Vec<crate::model::Kline>, ProviderError>
         + Send
         + Sync,
 >;

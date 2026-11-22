@@ -7,12 +7,13 @@
 use super::catalog::Catalog;
 use super::error::ProviderError;
 use crate::lock::lock;
-use crate::model::DataSource;
+use crate::model::{DataSource, Timeframe};
 use crate::model::watchlist::quote::{SourceQuote, VolumeKind};
 use crate::service::keychain::api_keys::tqsdk_credentials;
 use crate::service::net::http as net_http;
 use crate::service::watchlist_quotes::{QuoteFailure, QuoteRequest};
-use crate::service::{Kline, MarketSource, NAME_SEPARATOR, SearchResult, fold_calendar};
+use crate::service::{Kline, MarketSource, NAME_SEPARATOR, SearchResult};
+use crate::service::market::candles::plan;
 use flate2::{Decompress, FlushDecompress, Status};
 use http::header::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -1735,27 +1736,24 @@ impl MarketSource for TqSdk {
     fn fetch_klines(
         &self,
         symbol: &str,
-        interval: &str,
+        timeframe: Timeframe,
         limit: u32,
     ) -> Result<Vec<Kline>, ProviderError> {
         let symbol = symbol.trim();
-        let (duration_secs, fold) = interval_plan(interval)?;
-        match fold {
-            None => fetch_chart_klines(symbol, duration_secs, limit),
-            Some((target_secs, days_per_bar)) => {
+        let plan = plan(DataSource::TqSdk, timeframe)?;
+        let (duration_secs, fold) = interval_plan(&plan.base().interval())?;
+        let bars = match fold {
+            None => fetch_chart_klines(symbol, duration_secs, limit)?,
+            Some((_target_secs, _days_per_bar)) => {
                 let daily_limit = limit
-                    .saturating_mul(days_per_bar)
+                    .saturating_mul(_days_per_bar)
                     .saturating_add(30)
                     .clamp(300, 10_000);
                 let daily = fetch_chart_klines(symbol, duration_secs, daily_limit)?;
-                let mut folded = fold_calendar(&daily, target_secs, false);
-                let cap = limit as usize;
-                if folded.len() > cap {
-                    folded.drain(..folded.len() - cap);
-                }
-                Ok(folded)
+                plan.fold(daily, false)
             }
-        }
+        };
+        Ok(bars)
     }
 }
 
@@ -1939,12 +1937,12 @@ mod tests {
         test_connection(&user, &pass).expect("tqsdk auth failed");
 
         let klines = TQSDK
-            .fetch_klines("KQ.m@SHFE.rb", "15m", 20)
+            .fetch_klines("KQ.m@SHFE.rb", Timeframe::parse("15m").unwrap(), 20)
             .expect("klines failed");
         assert!(!klines.is_empty(), "expected klines for KQ.m@SHFE.rb");
 
         for sym in ["KQ.m@SHFE.rb", "KQ.m@CFFEX.IF", "SHFE.rb2701"] {
-            let daily = crate::service::fetch_klines(DataSource::TqSdk, sym, "1d", 500)
+            let daily = crate::service::fetch_klines(DataSource::TqSdk, sym, Timeframe::parse("1d").unwrap(), 500)
                 .unwrap_or_else(|e| panic!("daily klines failed for {sym}: {e:?}"));
             assert!(
                 daily.len() >= 10,

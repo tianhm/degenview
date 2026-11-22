@@ -20,11 +20,11 @@ pub(in crate::workspace) mod actions;
 use super::chart::CANDLE_LIMIT;
 use crate::model::market;
 use crate::model::market::history::OlderHistory;
-use crate::model::market::live::{self, LiveMark};
+use crate::model::market::live::{LiveFold, LiveMark};
 use crate::model::overlay::feed::{OverlayFeed, OverlayStatus};
 use crate::model::overlay::{OverlayId, OverlayList};
 use crate::model::{DataSource, InstrumentId, Kline, Timeframe};
-use crate::service::{self, ProviderError};
+use crate::service::{self, LiveCandles, ProviderError};
 use eframe::egui;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -48,19 +48,21 @@ const SLOW_RETRY_AFTER: Duration = Duration::from_secs(45);
 pub(super) trait OverlayBackend: Send + Sync + 'static {
     /// Runs `job` off the UI thread, on `source`'s lane of the work queue.
     fn submit(&self, source: DataSource, job: Box<dyn FnOnce() + Send>);
+    /// The newest candles, with the base candles of the newest one's bucket when a live feed
+    /// folds them.
     fn klines(
         &self,
         source: DataSource,
         symbol: &str,
-        interval: &str,
+        timeframe: Timeframe,
         limit: u32,
-    ) -> Result<Vec<Kline>, ProviderError>;
+    ) -> Result<LiveCandles, ProviderError>;
     /// A page of candles ending before `end_ms`.
     fn page(
         &self,
         source: DataSource,
         symbol: &str,
-        interval: &str,
+        timeframe: Timeframe,
         end_ms: i64,
     ) -> Result<Vec<Kline>, ProviderError>;
 }
@@ -76,20 +78,20 @@ impl OverlayBackend for ServiceBackend {
         &self,
         source: DataSource,
         symbol: &str,
-        interval: &str,
+        timeframe: Timeframe,
         limit: u32,
-    ) -> Result<Vec<Kline>, ProviderError> {
-        service::fetch_klines(source, symbol, interval, limit)
+    ) -> Result<LiveCandles, ProviderError> {
+        service::fetch_klines_live(source, symbol, timeframe, limit)
     }
 
     fn page(
         &self,
         source: DataSource,
         symbol: &str,
-        interval: &str,
+        timeframe: Timeframe,
         end_ms: i64,
     ) -> Result<Vec<Kline>, ProviderError> {
-        service::fetch_klines_range(source, symbol, interval, 0, end_ms, market::history::PAGE)
+        service::fetch_klines_range(source, symbol, timeframe, 0, end_ms, market::history::PAGE)
     }
 }
 
@@ -116,13 +118,15 @@ struct Series {
     status: OverlayStatus,
     /// Bumped by every request and reload; a queued job whose number is stale does nothing.
     generation: Arc<AtomicU64>,
-    inbox: Option<Receiver<Result<Vec<Kline>, ProviderError>>>,
+    inbox: Option<Receiver<Result<LiveCandles, ProviderError>>>,
     last_fetch: Option<Instant>,
     retry_at: Option<Instant>,
     older: OlderHistory,
     older_inbox: Option<Receiver<Result<Vec<Kline>, ProviderError>>>,
     /// The newest bar the live feed delivered: a refresh begun before it keeps it.
     live: Option<LiveMark>,
+    /// The live klines of the bucket forming, when the timeframe is folded from finer ones.
+    live_fold: LiveFold,
 }
 
 impl Series {
@@ -140,6 +144,7 @@ impl Series {
             older: OlderHistory::default(),
             older_inbox: None,
             live: None,
+            live_fold: LiveFold::default(),
         }
     }
 
@@ -149,6 +154,11 @@ impl Series {
 
     fn busy(&self) -> bool {
         self.inbox.is_some() || self.older_inbox.is_some()
+    }
+
+    /// The source cannot chart the timeframe: nothing is requested until the timeframe changes.
+    fn blocked(&self) -> bool {
+        matches!(self.status, OverlayStatus::Blocked(_))
     }
 
     /// The oldest candle any holding chart holds: the history this market should reach back to.
@@ -188,6 +198,7 @@ impl Series {
         self.last_fetch = None;
         self.retry_at = None;
         self.live = None;
+        self.live_fold.reset();
         self.status = OverlayStatus::Queued;
         if !self.candles.is_empty() {
             self.candles = Arc::new(Vec::new());
@@ -199,7 +210,7 @@ impl Series {
 /// How long after a request a market is asked again, with `active` markets being refreshed.
 pub(super) fn refresh_after(source: DataSource, active: usize) -> Duration {
     let floor = match source {
-        DataSource::CoinGecko | DataSource::DexScreener => SLOW_MIN_REFRESH,
+        DataSource::CoinGecko | DataSource::DexScreener | DataSource::Kraken => SLOW_MIN_REFRESH,
         _ => MIN_REFRESH,
     };
     floor.max(REFRESH_PER_MARKET * active as u32)
@@ -207,7 +218,7 @@ pub(super) fn refresh_after(source: DataSource, active: usize) -> Duration {
 
 fn retry_after(source: DataSource) -> Duration {
     match source {
-        DataSource::CoinGecko | DataSource::DexScreener => SLOW_RETRY_AFTER,
+        DataSource::CoinGecko | DataSource::DexScreener | DataSource::Kraken => SLOW_RETRY_AFTER,
         _ => RETRY_AFTER,
     }
 }
@@ -353,7 +364,7 @@ impl OverlayHub {
         }
         let mut changed = false;
         for series in self.series.values_mut() {
-            changed |= receive_fetch(series, now);
+            changed |= receive_fetch(series, timeframe, now);
             changed |= receive_older(series, now);
         }
         if changed {
@@ -371,7 +382,7 @@ impl OverlayHub {
         // First loads, then older pages, then refreshes; within each, the longest waiting first.
         let mut due: Vec<(u8, Option<Instant>, String)> = Vec::new();
         for (key, series) in &self.series {
-            if !series.shown() || series.busy() {
+            if !series.shown() || series.busy() || series.blocked() {
                 continue;
             }
             if series.retry_at.is_some_and(|at| now < at) {
@@ -411,32 +422,45 @@ impl OverlayHub {
         }
     }
 
-    /// A live Binance candle for `symbol`: every overlay market on that symbol takes it.
-    pub(super) fn apply_live(&mut self, symbol: &str, kline: &Kline, now: Instant) {
+    /// A live kline of `base` candles for `symbol` on `source`: every overlay market on that
+    /// symbol folds it into its candles of `timeframe`.
+    pub(super) fn apply_live(
+        &mut self,
+        source: DataSource,
+        timeframe: Timeframe,
+        base: Timeframe,
+        symbol: &str,
+        kline: &Kline,
+        now: Instant,
+    ) {
         for series in self.series.values_mut() {
-            if series.instrument.source != DataSource::Binance
-                || !series.instrument.symbol.eq_ignore_ascii_case(symbol)
+            if series.instrument.source != source
+                || !series.instrument.api_symbol().eq_ignore_ascii_case(symbol)
             {
                 continue;
             }
             let mut candles = (*series.candles).clone();
-            if !live::apply_live(&mut candles, kline.clone()) {
+            let Some(open_time) =
+                series
+                    .live_fold
+                    .apply(timeframe, base, &mut candles, kline.clone())
+            else {
                 continue;
-            }
-            series.live = Some(LiveMark::new(kline.open_time, now));
+            };
+            series.live = Some(LiveMark::new(open_time, now));
             if series.set_candles(candles) {
                 self.version += 1;
             }
         }
     }
 
-    /// The Binance symbols the live feed should also stream: shown overlay markets.
-    pub(super) fn binance_symbols(&self) -> Vec<String> {
+    /// The `source` symbols the live feed should also stream: shown overlay markets.
+    pub(super) fn streamed_symbols(&self, source: DataSource) -> Vec<String> {
         let mut symbols: Vec<String> = self
             .series
             .values()
-            .filter(|series| series.instrument.source == DataSource::Binance && series.shown())
-            .map(|series| series.instrument.symbol.to_uppercase())
+            .filter(|series| series.instrument.source == source && series.shown())
+            .map(|series| series.instrument.api_symbol())
             .collect();
         symbols.sort();
         symbols.dedup();
@@ -481,7 +505,7 @@ impl super::ChartWorkspace {
                         .feed(&overlay.instrument)
                         .unwrap_or_else(|| OverlayFeed::empty(OverlayStatus::Queued));
                     if overlay.instrument.key() == main {
-                        feed.status = OverlayStatus::Blocked("Same market as the chart");
+                        feed.status = OverlayStatus::Blocked("Same market as the chart".into());
                     }
                     feed
                 })
@@ -534,7 +558,7 @@ fn request_newest(
             let result = worker.klines(
                 instrument.source,
                 &instrument.symbol,
-                timeframe.interval(),
+                timeframe,
                 CANDLE_LIMIT,
             );
             let _ = sender.send(result);
@@ -560,12 +584,7 @@ fn request_older(
     backend.submit(
         instrument.source,
         Box::new(move || {
-            let page = worker.page(
-                instrument.source,
-                &instrument.symbol,
-                timeframe.interval(),
-                end,
-            );
+            let page = worker.page(instrument.source, &instrument.symbol, timeframe, end);
             let _ = sender.send(page);
             repaint.request_repaint();
         }),
@@ -574,7 +593,7 @@ fn request_older(
     series.older_inbox = Some(receiver);
 }
 
-fn receive_fetch(series: &mut Series, now: Instant) -> bool {
+fn receive_fetch(series: &mut Series, timeframe: Timeframe, now: Instant) -> bool {
     let Some(receiver) = &series.inbox else {
         return false;
     };
@@ -592,12 +611,24 @@ fn receive_fetch(series: &mut Series, now: Instant) -> bool {
                 .live
                 .zip(series.last_fetch)
                 .and_then(|(mark, begun)| mark.guard_for(begun));
-            let merged =
-                live::merge_fetched(fresh, &series.candles, live_open, CANDLE_LIMIT as usize);
+            let merged = series.live_fold.merge_fetched(
+                timeframe,
+                fresh.candles,
+                fresh.bars,
+                &series.candles,
+                live_open,
+                CANDLE_LIMIT as usize,
+            );
             let candles =
                 market::history::with_older(&series.candles, merged, series.older.keeps_older());
             series.set_candles(candles);
             series.status = OverlayStatus::Ready;
+            series.retry_at = None;
+        }
+        // No candle of the source reaches this timeframe: asking again would change nothing, so
+        // the overlay waits for another timeframe (`reset`) instead of being retried.
+        Err(error) if error.is_unsupported_interval() => {
+            series.status = OverlayStatus::Blocked(error.to_string().into());
             series.retry_at = None;
         }
         Err(error) => {

@@ -41,7 +41,7 @@ mod tests {
         SavedView {
             id: 1,
             name: "BTC watch".into(),
-            timeframe: Timeframe::Hour,
+            timeframe: Timeframe::HOUR_1,
             created_at_ms: 1_000,
             charts: vec![PersistedChart {
                 id: 1,
@@ -52,7 +52,7 @@ mod tests {
                 y_zoom: 1.0,
                 indicators: IndicatorConfig::default(),
                 appearance: crate::model::ChartAppearance::default(),
-                drawings: Vec::new(),
+                drawings: Default::default(),
                 pine_instances: Vec::new(),
                 candle_count: 200,
                 viewport: Default::default(),

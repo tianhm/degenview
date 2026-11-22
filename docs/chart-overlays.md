@@ -89,7 +89,7 @@ and Indexed axes, its price otherwise; a dash where it has no candle or nothing 
 hidden one). A hovered row shows an eye, a settings button and an x; clicking the row opens the
 settings too, and a right-click opens the menu (Settings…, Hide/Show, Scale ▸ Chart's / Its own /
 Scale of …, Visual order ▸ Bring to front / forward, Send backward / to back, Remove). The tooltip names
-the market, the provider and how its data is doing. A row is as tall as the OHLC box's text, so the card with one market is as tall as that box. At rest the card is as wide as its text; while the
+the market, the provider and how its data is doing; over one of the row's buttons it gives way to that button's own tooltip (egui shows one tooltip per layer and keeps the row's up while the pointer is anywhere in the row). A row is as tall as the OHLC box's text, so the card with one market is as tall as that box. At rest the card is as wide as its text; while the
 pointer is on it (or a settings popover is up) it widens by the room of the three buttons. Rows that do
 not fit are counted ("+N more").
 
@@ -113,7 +113,7 @@ of the script and the market popovers is open at a time; opening the chart setti
 The Compare page of the chart settings (`ui/chart/settings/compare.rs`) has one card per market. The
 header always shows the line as drawn (colour, width, dash), the name, the exchange and how the data is
 doing (last price, "Loading…", "Waiting to load", or an orange "Couldn't load: …" / "Same market as the
-chart" / "Not shown on price-based chart types"), with the eye, a menu (Bring to front / forward, Send
+chart" / "<Source> has no <timeframe> history" / "Not shown on price-based chart types"), with the eye, a menu (Bring to front / forward, Send
 backward / to back, Remove) and a chevron; clicking the header opens the settings. Cards start open
 while there are three or fewer and closed after that, and what the user opened or closed is kept while
 the sheet is open. Past six markets a search field appears (name, symbol, exchange); reordering is off
@@ -150,9 +150,13 @@ chart uses (`service::fetch_klines`, `fetch_klines_range`, `work_queue::submit_f
   later than the oldest candle any chart holding it has, and stops at the provider's start or the
   `MAX_CANDLES` cap. It never pages for a hidden overlay.
 * **Live**: Binance overlay symbols join the one live socket (deduplicated with the charts') and a
-  candle updates every holder. Other providers refresh over REST.
+  kline updates every holder, folded into its bucket like the chart's (`LiveFold`, one per market).
+  Other providers refresh over REST.
 * **Errors**: a failing market shows its own error, is retried after 15 s (45 s for CoinGecko and
-  DexScreener) and never touches the others or the chart. A missing Alpaca key is that error.
+  DexScreener) and never touches the others or the chart. A missing Alpaca key is that error. A
+  market whose source has no candles at the chart's timeframe (`ProviderError::UnsupportedInterval`,
+  "CoinGecko has no 1m history") is `OverlayStatus::Blocked` with that text, like "Same market as the
+  chart": nothing is requested for it until the timeframe changes, which resets every overlay.
 
 ## Resource use
 

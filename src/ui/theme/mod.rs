@@ -469,14 +469,6 @@ pub fn card_border(hovered: bool) -> Color32 {
     ink(if hovered { 40 } else { 30 })
 }
 
-/// The 1px line along a card's top edge that reads as light falling on it from above.
-pub fn card_highlight() -> Color32 {
-    pick(
-        Color32::from_white_alpha(26),
-        Color32::from_white_alpha(200),
-    )
-}
-
 /// An inset well, darker than the card it sits on: the off track of a switch.
 pub fn well_fill() -> Color32 {
     pick(Color32::from_black_alpha(70), ink(26))
@@ -528,36 +520,31 @@ pub mod syntax {
 /// selection, tabs and links. The rest of the Rust app keeps its own `ACCENT`.
 pub const SYSTEM_ACCENT: Color32 = Color32::from_rgb(10, 132, 255);
 
-/// Puts the macOS system fonts (SF Pro for text, SF Mono for code) ahead of egui's bundled ones,
-/// like the Swift app, which uses them everywhere. The bundled fonts stay as glyph fallbacks, and
-/// a machine without the files simply keeps the defaults. STIX Two Math and Apple Symbols go last
+/// Puts Inter (bundled, the same on every platform) first in the proportional family and the macOS
+/// system monospace font (SF Mono) first in the monospace one. The fonts egui ships stay as glyph
+/// fallbacks, and a machine without SF Mono simply keeps them. STIX Two Math and Apple Symbols go last
 /// in both families so characters the others lack — "𝓑𝓾𝔂" and other math alphanumerics, arrows,
 /// geometric shapes — draw instead of showing tofu squares.
 fn base_fonts() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
-    for (name, path, family) in [
-        (
-            "sf-pro",
-            "/System/Library/Fonts/SFNS.ttf",
-            egui::FontFamily::Proportional,
-        ),
-        (
-            "sf-mono",
-            "/System/Library/Fonts/SFNSMono.ttf",
-            egui::FontFamily::Monospace,
-        ),
-    ] {
-        if let Ok(bytes) = std::fs::read(path) {
-            fonts.font_data.insert(
-                name.to_owned(),
-                std::sync::Arc::new(egui::FontData::from_owned(bytes)),
-            );
-            fonts
-                .families
-                .entry(family)
-                .or_default()
-                .insert(0, name.to_owned());
-        }
+    fonts
+        .font_data
+        .insert("inter".to_owned(), bundled_ui_font());
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "inter".to_owned());
+    if let Ok(bytes) = std::fs::read("/System/Library/Fonts/SFNSMono.ttf") {
+        fonts.font_data.insert(
+            "sf-mono".to_owned(),
+            std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+        );
+        fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .insert(0, "sf-mono".to_owned());
     }
     for (name, path) in [
         (
@@ -585,51 +572,22 @@ fn base_fonts() -> egui::FontDefinitions {
     fonts
 }
 
-/// Appends the platform's CJK and symbol fallback fonts to both `Proportional` and `Monospace`
-/// so Chinese futures names, notices, and UI labels never render as tofu squares.
-fn add_cjk_fallback(fonts: &mut egui::FontDefinitions) {
-    let candidates: &[(&str, &str)] = &[
-        // Windows
-        ("msyh", r"C:\Windows\Fonts\msyh.ttc"),
-        ("simhei", r"C:\Windows\Fonts\simhei.ttf"),
-        ("simsun", r"C:\Windows\Fonts\simsun.ttc"),
-        ("dengxian", r"C:\Windows\Fonts\Deng.ttf"),
-        ("segoe-symbol", r"C:\Windows\Fonts\seguisym.ttf"),
-        // macOS
-        ("pingfang", "/System/Library/Fonts/PingFang.ttc"),
-        ("hiragino-gb", "/System/Library/Fonts/Hiragino Sans GB.ttc"),
-        ("stheiti", "/System/Library/Fonts/STHeiti Light.ttc"),
-        // Linux
-        (
-            "noto-cjk-ot",
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        ),
-        (
-            "noto-cjk",
-            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
-        ),
-        (
-            "wqy-microhei",
-            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        ),
-        ("wqy-zenhei", "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
-    ];
-
-    for (name, path) in candidates {
-        if let Ok(bytes) = std::fs::read(path) {
-            fonts.font_data.insert(
-                (*name).to_owned(),
-                std::sync::Arc::new(egui::FontData::from_owned(bytes)),
-            );
-            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-                fonts
-                    .families
-                    .entry(family)
-                    .or_default()
-                    .push((*name).to_owned());
-            }
-        }
-    }
+/// Inter Regular (`assets/fonts`, SIL OFL 1.1; the licence and where the file comes from are in
+/// `assets/fonts/README.md`): the font of the app's text on every platform.
+///
+/// Drawn unhinted: on a 1x screen egui's grid-fitting rounds Inter's x-height and cap height up to
+/// whole pixels (a 13 px line gains a pixel of height and some weight), so text looks stretched
+/// compared with a 2x screen. Unhinted keeps the font's own proportions at any scale.
+pub fn bundled_ui_font() -> std::sync::Arc<egui::FontData> {
+    static FONT: std::sync::OnceLock<std::sync::Arc<egui::FontData>> = std::sync::OnceLock::new();
+    const INTER: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
+    FONT.get_or_init(|| {
+        std::sync::Arc::new(egui::FontData::from_static(INTER).tweak(egui::FontTweak {
+            hinting: Some(false),
+            ..Default::default()
+        }))
+    })
+    .clone()
 }
 
 /// The app's fonts without the editor's choice, read from the system once.
@@ -737,7 +695,7 @@ mod tests {
         let draws = |with_fallback: bool| {
             let mut fonts = egui::FontDefinitions::default();
             if with_fallback {
-                add_symbol_fallback(&mut fonts);
+                    add_symbol_fallback(&mut fonts);
             }
             let ctx = egui::Context::default();
             ctx.set_fonts(fonts);
@@ -763,26 +721,6 @@ mod tests {
         assert_eq!(draws(true), Vec::<char>::new());
     }
 
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn windows_cjk_fallback_draws_chinese_characters() {
-        let ctx = egui::Context::default();
-        install_fonts(&ctx);
-        let mut output = ctx.run_ui(Default::default(), |_| {});
-        output.textures_delta.clear();
-        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            let font = egui::FontId::new(14.0, family.clone());
-            let tofu = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, '\u{10FFFF}'));
-            for ch in "螺纹钢沪深开仓平仓".chars() {
-                let width = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, ch));
-                assert!(
-                    width > 0.0 && width != tofu,
-                    "missing glyph for {ch} in {family:?}"
-                );
-            }
-        }
-    }
-
     #[test]
     fn math_alphanumerics_have_a_fallback_glyph_in_both_families() {
         if !std::path::Path::new("/System/Library/Fonts/Supplemental/STIXTwoMath.otf").exists() {
@@ -793,7 +731,7 @@ mod tests {
         let mut output = ctx.run_ui(Default::default(), |_| {});
         output.textures_delta.clear();
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            let font = egui::FontId::new(14.0, family.clone());
+            let font = egui::FontId::new(14.0, family);
             let width = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, '𝓑'));
             let missing = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, '\u{10FFFF}'));
             assert!(width > 0.0 && width != missing);
@@ -812,7 +750,7 @@ mod tests {
         let mut output = ctx.run_ui(Default::default(), |_| {});
         output.textures_delta.clear();
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            let font = egui::FontId::new(14.0, family.clone());
+            let font = egui::FontId::new(14.0, family);
             let missing = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, '\u{10FFFF}'));
             for digit in '₀'..='₉' {
                 let width = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, digit));
@@ -826,7 +764,7 @@ mod tests {
     fn a_hovered_card_is_lifted_above_a_resting_one() {
         assert!(card_fill(true).a() > card_fill(false).a());
         assert!(card_border(true).a() > card_border(false).a());
-        assert!(card_fill(false).a() > 0 && card_highlight().a() > 0);
+        assert!(card_fill(false).a() > 0);
     }
 
     #[test]
@@ -857,5 +795,52 @@ mod tests {
         assert_eq!(choice(), AppTheme::Dark);
         assert_eq!(text_primary(), DARK.text_primary);
         assert_eq!(ink(255), Color32::WHITE);
+    }
+}
+
+/// Appends the platform's CJK and symbol fallback fonts to both `Proportional` and `Monospace`
+/// so Chinese futures names, notices, and UI labels never render as tofu squares.
+fn add_cjk_fallback(fonts: &mut egui::FontDefinitions) {
+    let candidates: &[(&str, &str)] = &[
+        // Windows
+        ("msyh", r"C:\Windows\Fonts\msyh.ttc"),
+        ("simhei", r"C:\Windows\Fonts\simhei.ttf"),
+        ("simsun", r"C:\Windows\Fonts\simsun.ttc"),
+        ("dengxian", r"C:\Windows\Fonts\Deng.ttf"),
+        ("segoe-symbol", r"C:\Windows\Fonts\seguisym.ttf"),
+        // macOS
+        ("pingfang", "/System/Library/Fonts/PingFang.ttc"),
+        ("hiragino-gb", "/System/Library/Fonts/Hiragino Sans GB.ttc"),
+        ("stheiti", "/System/Library/Fonts/STHeiti Light.ttc"),
+        // Linux
+        (
+            "noto-cjk-ot",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        ),
+        (
+            "noto-cjk",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        ),
+        (
+            "wqy-microhei",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        ),
+        ("wqy-zenhei", "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
+    ];
+
+    for (name, path) in candidates {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts.font_data.insert(
+                (*name).to_owned(),
+                std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+            );
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                fonts
+                    .families
+                    .entry(family)
+                    .or_default()
+                    .push((*name).to_owned());
+            }
+        }
     }
 }

@@ -349,6 +349,13 @@ impl ChartCard {
         self.forget_zoom_history();
     }
 
+    /// Drops a drawing being placed or moved, and the Demonstration marks: their anchors belong
+    /// to the market that was shown.
+    pub fn abort_drawing(&mut self) {
+        self.layer.abandon();
+        self.demo.clear();
+    }
+
     /// Whether the price axis follows the bars on screen (no range placed by dragging).
     #[cfg(test)]
     pub(crate) fn prices_are_autoscaled(&self) -> bool {

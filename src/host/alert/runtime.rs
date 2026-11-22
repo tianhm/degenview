@@ -1,6 +1,7 @@
 //! Exclusive ownership and the shared price-alert runtime loop used by both the GUI fallback and
 //! the embedded login item. Pine alerts deliberately stay in the GUI.
 
+use crate::clock::now_ms;
 use crate::host::alert::AlertHost;
 use crate::lock::lock;
 use crate::model::alert::{
@@ -168,7 +169,8 @@ impl AlertRuntimeRunner {
 }
 
 pub fn run_alert_agent() -> Result<(), Box<dyn std::error::Error>> {
-    let directory = store::data_dir().ok_or("cannot locate the application data directory")?;
+    let directory =
+        crate::paths::data_dir().ok_or("cannot locate the application data directory")?;
     let _lease = loop {
         if let Some(lease) = AlertRuntimeLease::try_acquire(&directory)? {
             break lease;
@@ -176,6 +178,9 @@ pub fn run_alert_agent() -> Result<(), Box<dyn std::error::Error>> {
         std::thread::sleep(Duration::from_millis(250));
     };
     let store = store::open_default()?;
+    // This process is separate from the app: it reads the proxy setting when it starts and
+    // follows what the app saves after (`proxy::follow`, in the loop).
+    crate::service::net::proxy::init(&lock(&store));
     let quote_book = WatchlistQuoteBook::default();
     let quote_coordinator = WatchlistQuoteCoordinator::new(quote_book.clone(), Arc::new(|| {}));
     let notifier = default_notifier();
@@ -191,6 +196,7 @@ pub fn run_alert_agent() -> Result<(), Box<dyn std::error::Error>> {
     let mut runner = AlertRuntimeRunner::new(AlertRuntimeOwner::Agent);
 
     loop {
+        crate::service::net::proxy::follow(&lock(&store));
         let now = now_ms();
         if now.saturating_sub(rates_refreshed_at) >= 3_600_000 {
             rates = refresh_rates(&fx);
@@ -243,13 +249,6 @@ fn refresh_rates(fx: &FxRateService) -> HashMap<AlertCurrency, f64> {
         .map(|rate| (currency, rate))
     })
     .collect()
-}
-
-pub fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

@@ -1,7 +1,8 @@
+use crate::clock::now_ms;
 use crate::model::market::cmc::{
     ALTCOIN_HISTORICAL, ALTCOIN_LATEST, CHART_TYPES, FEAR_GREED_HISTORICAL, FEAR_GREED_LATEST,
 };
-use crate::model::{DataSource, Kline};
+use crate::model::{DataSource, Kline, Timeframe};
 use crate::service::{MarketSource, ProviderError, SearchResult, downsample};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -54,12 +55,6 @@ static LATEST: LazyLock<Mutex<HashMap<String, LatestReading>>> = LazyLock::new(D
 /// The last reading fetched for a "Latest" chart, if any.
 pub fn latest_reading(symbol: &str) -> Option<LatestReading> {
     LATEST.lock().ok()?.get(symbol).cloned()
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_millis() as i64)
 }
 
 /// Bitcoin Season up to 25, Altcoin Season from 75.
@@ -245,7 +240,7 @@ impl MarketSource for CoinMarketCap {
     fn fetch_klines(
         &self,
         symbol: &str,
-        _interval: &str,
+        _timeframe: Timeframe,
         limit: u32,
     ) -> Result<Vec<Kline>, ProviderError> {
         let key = api_key();

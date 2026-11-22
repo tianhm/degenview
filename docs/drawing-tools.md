@@ -104,6 +104,18 @@ same text.
 
 ### Storage and sync
 
+- **Drawings belong to a market.** A chart keeps a separate set for every market it has shown
+  (`Chart::drawings` is the set of the market on screen, `Chart::parked_drawings` the others, by
+  `InstrumentId::key()`; `workspace/chart/drawing_sets.rs`). Changing the chart's symbol swaps the
+  set and changing back restores it; two charts of one market keep their own. A ruler is not kept:
+  it measures the market it was drawn on. Saved, a chart's drawings are still one flat array
+  (`model::drawings::market::MarketDrawings`): each drawing's body names its `market` and carries
+  `"since": 2` (`DRAWING_FORMAT`), so the layout's drawing records, their keys and ids are as before.
+  A drawing that names no market (saved by a build before this one) is dropped when read. Ids stay
+  unique per chart across markets, and `next_drawing_id` is one counter; when another Mac's layout is
+  merged into an open tab, a drawing made here that takes an id of another market is renumbered.
+  Changing the symbol also drops what is in progress on the old market (`DrawingLayer::abandon`: a
+  gesture, an inline text draft, a table cell, the open menu).
 - The app has not shipped with the older forms, so nothing is kept for them: the trend line is a
   `Shape` with a `trend_line` geometry like every other line (it was a variant of its own), and a
   row saved by an earlier development build may be unreadable now.
@@ -216,6 +228,49 @@ Each shape has the handles its geometry needs (eight on a rectangle or ellipse, 
 a circle, three on a rotated rectangle with the width handle on the far edge, vertices on paths,
 hollow control points on curves).
 
+## Favorites
+
+A star at the right end of every row of the six flyouts stars that tool (`Tool::GROUPED`, so a tool
+added there gets one; the ruler has no row), and every row of the cursor menu stars that cursor
+([Chart cursors](chart-cursors.md#favorites)). Starred tools and cursors show in a small floating
+bar over the window: a grip of dots, then one button per favorite.
+
+- **Doc** (TradingView's help on favoriting, not detailed): a star beside a tool in the dropdown adds it
+  to a separate floating panel. Third-party posts say the panel can be moved and that a star toggle hides
+  it. **Inferred**, not stated anywhere read: the grip, the default place (centred near the top of the
+  chart area), the order (the order starred; unstarring and starring again moves a tool to the end),
+  and hiding through a right-click on the bar ("Hide favorites toolbar"). Nothing was compared with
+  TradingView.
+- **One tool choice.** A button goes through `ChartWorkspace::toggle_tool`, the call a rail tile uses, and the
+  bar lights the tab's armed tool (`DrawingTools::active`), so the rail, the menus and the bar cannot
+  disagree. Starring or unstarring never changes what is armed. Pressing the lit button puts the tool
+  down, as a rail tile does.
+- **Stars.** The star is a target of its own, made after the row, so a click on it never picks the tool,
+  and the menu stays open (`PopupCloseBehavior::CloseOnClickOutside`; picking a row closes it itself).
+  The bar changes at once: the stars are read through `Store::drawing_favorites_cached`, which rebuilds
+  after any write, so another window shows them too.
+- **Stored.** `drawing.favorites` is a list of tool names (the variant names `drawing.prefs` uses; a cursor is `cursor:` and its name) and syncs;
+  `drawing.favoritesBar` is the place and a hidden flag and stays on the device (`store::drawing_favorites`,
+  `model::drawings::favorites`). A name this build does not know is kept when the list is written and
+  left out of the bar. Starring a tool shows a hidden bar again.
+- **Place.** The bar starts centred near the top of the charts' area and can be dragged anywhere in the
+  window below the tab strip: over the toolbar, the replay bar, the tool rail or a side panel, not only the
+  charts. The place is the share of the room the bar has to move in (0 top-left, 1 bottom-right) of that
+  whole area (`BarPrefs::window`), so a resized window keeps it inside; a bar bigger than that room sits at
+  its corner, and a chart area too small for it hides it. A place saved before the bar could leave the
+  charts (no `window` flag) is read as a share of the charts' area, so it comes back where it was left, and
+  the next move saves a window place. It is saved when the grip is let go, not while it moves. The bar is
+  not shown while a portion of the chart is being selected or a replay start is being picked. Over the
+  toolbar it covers what is under it, as any floating bar does; drag it away to reach that.
+- **Escape.** An open menu of the bar takes Escape first (`favorites_bar::close_menu_on_escape`, called before the
+  charts are drawn, as the scale menu does): it closes the menu and spends the key, so a draft, the armed tool and the
+  selection behind it stay as they were.
+- **Layer.** The bar is a `Middle`-order area: above the charts, below every popup and menu (so a flyout
+  open while its first star makes the bar appear keeps the pointer), the selected drawing's toolbar and the
+  dialogs. Beside another `Middle` window (Drawing properties) the later one drawn is on top until the
+  other is clicked.
+- **Not done.** No keyboard way to reorder, no per-chart list, no star on the ruler or Zoom In.
+
 ## Magnet and Keep drawing
 
 The strip's magnet cycles Off → Weak → Strong. Strong snaps an anchor to the open, high, low or
@@ -226,6 +281,9 @@ the replay cursor, so it cannot reach a bar replay has not shown.
 
 Keep drawing (on by default, which is how the tools always behaved here) stays on the tool after
 a drawing; off returns to the crosshair. Magnet, keep drawing and the grouped tile's tool persist.
+
+The cursor menu on the strip's first tile has an Eraser that removes drawings by clicking or
+sweeping over them; see [Chart cursors](chart-cursors.md).
 
 ## Styles, text, templates
 
@@ -257,8 +315,8 @@ here has a pip convention to follow.
 
 ## Persistence and undo
 
-Drawings are saved with their chart in the existing session and saved layouts; new fields
-default. A chart's drawings decode one by one
+Drawings are saved with their chart (every market's, see Storage and sync) in the existing session
+and saved layouts; new fields default. A chart's drawings decode one by one
 (`model::drawings::lenient`): a row this version cannot read, such as a tool from a newer build,
 stays in the list as `Drawing::Unreadable` and is written back byte for byte, instead of costing
 the whole tab or layout. Geometry with a non-finite number or too few points is treated the same.
@@ -278,6 +336,14 @@ others, and the replay-truncated candles during replay. Times between bars inter
 beyond the data extrapolate at the average interval, so a drawing anchored after the replay cursor
 stays where it is. Changing the chart type, the timeframe or the replay position never rewrites an
 anchor; per-timeframe visibility is only a predicate on what is shown.
+
+Visibility is a `u8` mask with one fixed bit per `VisibilityRow` (Hours 0, Days 1, Weeks 2, Months 3,
+Quarters 4, Years 5, Minutes 6); a timeframe is shown under its row (`VisibilityRow::of`: minutes,
+hours, days, weeks, 1-2M Months, 3-6M Quarters, 7-12M Years), and the page lists the seven rows in
+the order Minutes, Hours, Days, Weeks, Months, Quarters, Years. Bit 7 marks a mask written with
+the Minutes bit. A mask without it was saved before minutes existed (the old "every timeframe" is
+`63`): its minutes follow its Hours bit, so such a drawing is still visible wherever it was and
+on minutes if it showed on hours. The last visible row cannot be hidden.
 
 Drawings are main-pane only. Indicator panes are separate coordinate spaces and a drawing is never
 reinterpreted as a pane value.
@@ -320,7 +386,10 @@ reinterpreted as a pane value.
   can darken where it crosses. Separate strokes darken by design.
 - **Locking and hiding all** act on every chart of the tab, with one undo step per chart because
   history is per chart. "Hide all" is a view toggle and is not saved.
-- Market replacement (`switch_chart`) keeps a chart's old drawings, as before.
+- Market replacement (`switch_chart`) files the drawings under the market the chart leaves. Tab
+  Linking switches are not undo steps, so they forget the chart's drawing steps
+  (`switch_chart_outside_undo`); a replacement from the symbol picker is a step, and undo walks back
+  through drawing and market steps in order.
 
 ## Performance
 

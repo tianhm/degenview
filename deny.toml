@@ -30,11 +30,16 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained, merged into zbus 6; follows oo7" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained, merged into zbus 6; follows oo7" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained, merged into zbus 6; follows oo7" },
+    # Through rmcp and schemars (the MCP server's protocol and schema crates), never a direct
+    # dependency. Reported unmaintained on 2026-11-17; follows the rmcp release that moves off it.
+    { id = "RUSTSEC-2026-0543", reason = "chrono: unmaintained, transitive through rmcp and schemars; follows rmcp" },
 ]
 
 [sources]
 # Crates come from crates.io and nowhere else: no git dependencies, no other registries, no
-# forks. A dependency from another source can change under the same version number.
+# forks. A dependency from another source can change under the same version number. Our own crates
+# (degenview-brokers, degenview-journal, degenview-eframe) are published to crates.io and pinned
+# exactly; a `[patch]` or a vendored copy would bypass this check.
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]

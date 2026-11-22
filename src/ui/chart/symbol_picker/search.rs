@@ -25,9 +25,14 @@ const RELATED_LIMIT: usize = 6;
 
 /// The markets the picker lists, in the order the providers are asked (and so the order exchanges
 /// that list the same market appear in).
-pub const PROVIDERS: [DataSource; 6] = [
+pub const PROVIDERS: [DataSource; 11] = [
     DataSource::Binance,
     DataSource::Coinbase,
+    DataSource::Okx,
+    DataSource::Kraken,
+    DataSource::Bybit,
+    DataSource::Gate,
+    DataSource::Mexc,
     DataSource::DexScreener,
     DataSource::CoinGecko,
     DataSource::Alpaca,
@@ -81,10 +86,7 @@ impl Scope {
             Self::All | Self::Watchlists => PROVIDERS.contains(&source),
             Self::Stocks => source == DataSource::Alpaca,
             Self::Futures => source == DataSource::TqSdk,
-            Self::Crypto => {
-                PROVIDERS.contains(&source)
-                    && !matches!(source, DataSource::Alpaca | DataSource::TqSdk)
-            }
+            Self::Crypto => PROVIDERS.contains(&source) && source != DataSource::Alpaca,
             Self::Predictions => PREDICTION_PROVIDERS.contains(&source),
             Self::Dashboards => source == DataSource::CoinMarketCap,
         }
@@ -131,8 +133,7 @@ impl Scope {
             Self::Predictions => "Search markets (e.g. Bitcoin, Fed, election)",
             Self::Dashboards => "Filter indices and portfolio views",
             Self::Watchlists => "Filter your watchlists",
-            Self::Futures => "Search futures (e.g. rb, IF, 螺纹钢)…",
-            Self::All | Self::Stocks | Self::Crypto => "Search symbol…",
+            Self::All | Self::Stocks | Self::Futures | Self::Crypto => "Search symbol…",
         }
     }
 }
@@ -154,7 +155,6 @@ pub fn popular() -> Vec<SearchResult> {
 pub fn market_kind(source: DataSource) -> &'static str {
     match source {
         DataSource::Alpaca => "Stock",
-        DataSource::TqSdk => "Futures",
         DataSource::Polymarket | DataSource::Kalshi => "Prediction",
         DataSource::CoinMarketCap => "Index",
         _ => "Crypto",
@@ -164,11 +164,16 @@ pub fn market_kind(source: DataSource) -> &'static str {
 /// How a market trades, for the "also trades as" column.
 pub fn trading_kind(source: DataSource) -> &'static str {
     match source {
-        DataSource::Binance | DataSource::Coinbase => "Spot",
+        DataSource::Binance
+        | DataSource::Coinbase
+        | DataSource::Okx
+        | DataSource::Kraken
+        | DataSource::Bybit
+        | DataSource::Gate
+        | DataSource::Mexc => "Spot",
         DataSource::DexScreener => "DEX",
         DataSource::CoinGecko => "Aggregate",
         DataSource::Alpaca => "Stock",
-        DataSource::TqSdk => "Futures",
         _ => "",
     }
 }
@@ -357,9 +362,7 @@ impl Related {
             found.insert(asset.clone(), answer);
             false
         });
-        if !PROVIDERS.contains(&of.source)
-            || matches!(of.source, DataSource::Alpaca | DataSource::TqSdk)
-        {
+        if !PROVIDERS.contains(&of.source) || of.source == DataSource::Alpaca {
             return Some(Vec::new());
         }
         let asset = of.base_asset();
@@ -382,19 +385,27 @@ fn same(a: &SearchResult, b: &SearchResult) -> bool {
 
 /// Every dollar market of `asset` on the exchanges whose lists are held locally.
 fn related_markets(asset: &str) -> Vec<SearchResult> {
-    let groups: Vec<Vec<SearchResult>> = [DataSource::Binance, DataSource::Coinbase]
-        .into_iter()
-        .map(|source| {
-            service::search(source, asset)
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|hit| {
-                    hit.base_asset().eq_ignore_ascii_case(asset)
-                        && hit.quote.as_deref().is_some_and(is_dollar_quote)
-                })
-                .collect()
-        })
-        .collect();
+    let groups: Vec<Vec<SearchResult>> = [
+        DataSource::Binance,
+        DataSource::Coinbase,
+        DataSource::Okx,
+        DataSource::Kraken,
+        DataSource::Bybit,
+        DataSource::Gate,
+        DataSource::Mexc,
+    ]
+    .into_iter()
+    .map(|source| {
+        service::search(source, asset)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|hit| {
+                hit.base_asset().eq_ignore_ascii_case(asset)
+                    && hit.quote.as_deref().is_some_and(is_dollar_quote)
+            })
+            .collect()
+    })
+    .collect();
     search_rank::merge_ranked(groups, asset)
         .into_iter()
         .take(RELATED_LIMIT + 1)
@@ -433,7 +444,7 @@ mod tests {
     fn a_mode_offers_only_the_tabs_it_can_use() {
         assert_eq!(Scope::tabs(PickMode::Chart), Scope::TABS);
         assert_eq!(Scope::tabs(PickMode::Add), Scope::TABS);
-        // A market compared over a chart is a stock, futures or crypto market.
+        // A market compared over a chart is a crypto, stock or futures market.
         assert_eq!(
             Scope::tabs(PickMode::Compare),
             [
@@ -489,6 +500,11 @@ mod tests {
         }
         for source in [
             DataSource::Coinbase,
+            DataSource::Okx,
+            DataSource::Kraken,
+            DataSource::Bybit,
+            DataSource::Gate,
+            DataSource::Mexc,
             DataSource::DexScreener,
             DataSource::CoinGecko,
             DataSource::TqSdk,

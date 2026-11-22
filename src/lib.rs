@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod alloc_count;
 mod app;
+mod build_info;
+mod clock;
 mod crash_report;
 mod format;
 mod host;
@@ -10,6 +12,7 @@ mod lock;
 mod mcp;
 mod model;
 mod native_bridge;
+mod paths;
 mod pine;
 mod pine_studio;
 mod platform;
@@ -23,7 +26,7 @@ mod workspace;
 use app::DegenViewApp;
 use eframe::egui;
 
-pub use crash_report::install_panic_hook;
+pub use crash_report::{install_panic_hook, note as note_startup};
 pub use sync::transport::native::{CloudKitFactory, NativeApi};
 pub use sync::transport::{EventSink, TransportFactory};
 
@@ -36,10 +39,15 @@ pub fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 pub fn run_gui_with(
     sync: Option<std::sync::Arc<dyn TransportFactory>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    crash_report::begin_startup_log();
     // Started by an update on Windows or Linux: let the process it replaces exit before the database
     // opens, and do not open it at all if that process never does (two instances on one store).
     service::update::install::wait_for_predecessor()?;
+    crash_report::note("opening the database");
     let store = store::open_default()?;
+    crash_report::note("database open");
+    // Before the first request: every agent and live feed follows this proxy setting.
+    service::net::proxy::init(&crate::lock::lock(&store));
     // A database copied from another Mac becomes this Mac's own before anything reads its ids.
     host::sync::adopt_this_mac(&store);
     // A finished update leaves the previous app in a hidden folder until the new one has started.
@@ -62,14 +70,26 @@ pub fn run_gui_with(
             .with_transparent(ui::window::chrome::rounded_corners())
             .with_icon(icon)
             .with_inner_size([1.0, 1.0])
-            .with_position([-10_000.0, -10_000.0]),
+            .with_position([-10_000.0, -10_000.0])
+            // The root is only the coordinator. Wayland cannot hide a window, so `degenview-eframe`
+            // (eframe with a Wayland fix) never presents a viewport asked to be hidden: the root
+            // stays unmapped.
+            // Elsewhere eframe still shows it for its first frame, and `DegenViewApp::ui` hides it.
+            .with_visible(false),
         ..Default::default()
     };
 
+    crash_report::note("creating the window and graphics");
     Ok(eframe::run_native(
         "DegenView",
         options,
         Box::new(move |creation| {
+            // Which adapter and backend was chosen is the first thing to ask about a start that
+            // shows nothing (a driver that hangs or crashes ends the log here).
+            crash_report::note(&match &creation.wgpu_render_state {
+                Some(state) => format!("graphics ready: {:?}", state.adapter.get_info()),
+                None => "graphics ready".to_owned(),
+            });
             Ok(Box::new(DegenViewApp::new(
                 creation,
                 store.clone(),

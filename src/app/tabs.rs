@@ -7,7 +7,7 @@ use crate::host::tab::window::{Placement, TabWindowHost};
 use crate::model::InstrumentId;
 use crate::model::Timeframe;
 use crate::model::tab::link::LinkHub;
-use crate::model::tab::windows::WindowId;
+use crate::model::tab::windows::{LAST_WINDOW_QUITS, WindowId};
 use crate::model::watchlist::WatchlistInstrument;
 use crate::pine_studio::{ExitReason, PineStudio, PineStudioAction};
 use crate::service::watchlist_quotes::{WatchlistQuoteBook, WatchlistQuoteCoordinator};
@@ -97,6 +97,7 @@ pub(super) fn show_tab(
             workspace.set_card_env(&env.card_env);
             workspace.set_trading_hub(&env.trading_hub);
             workspace.set_snapshots(&env.snapshots);
+            workspace.set_market_flow(&env.liquidations, &env.taker_flow, &env.depth);
             workspace.set_link_host(env.tabs.links());
             let actions = workspace.ui(ui, &env.paper_host);
             if workspace.has_link_signals() {
@@ -194,6 +195,7 @@ pub(super) fn show_tab(
                     PineStudioAction::OpenAlpacaSettings => AppAction::OpenAlpacaSettings,
                     PineStudioAction::OpenWebhookSettings => AppAction::OpenWebhookSettings,
                     PineStudioAction::OpenAiSettings => AppAction::OpenAiSettings,
+                    PineStudioAction::OpenEditorThemeSettings => AppAction::OpenEditorThemeSettings,
                 }));
             }
         }
@@ -254,7 +256,7 @@ impl SharedTabs {
                 workspace.link(),
                 true,
             ),
-            _ => (None, "", None, false),
+            _ => (None, String::new(), None, false),
         };
         Some(TabView {
             id: tab,
@@ -451,7 +453,7 @@ impl TabState {
     }
 
     /// Forgets the contents of tabs the window host closed. Without a window left there is
-    /// nothing to show, so Windows and Linux quit; macOS stays in the Dock as it always did.
+    /// nothing to show, so Windows and Linux quit (`LAST_WINDOW_QUITS`); macOS stays in the Dock.
     pub(super) fn drop_closed(&mut self, ctx: &egui::Context) {
         let closed = self.shared.windows.take_closed();
         if closed.is_empty() {
@@ -463,7 +465,7 @@ impl TabState {
                 registry.remove(id);
             }
         }
-        if self.shared.windows.is_empty() && !cfg!(target_os = "macos") {
+        if self.shared.windows.is_empty() && LAST_WINDOW_QUITS {
             ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
         }
     }
@@ -596,7 +598,7 @@ impl DegenViewApp {
         let id = self.tabs.allocate_id();
         let slot = TabSlot::new(TabContent::Chart(Box::new(ChartWorkspace::empty(
             id,
-            Timeframe::Day,
+            Timeframe::DAY_1,
             Arc::clone(&self.watchlist),
             self.quote_book.clone(),
             self.quote_coordinator.clone(),

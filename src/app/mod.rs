@@ -18,6 +18,7 @@ use crate::app::tabs::TabContent;
 use crate::app::tabs::TabSlot;
 use crate::app::tabs::TabState;
 use crate::app::window::settings_viewport_id;
+use crate::clock::now_ms;
 use crate::host::alert::AlertHost;
 use crate::host::editor_theme::EditorThemeHost;
 use crate::host::paper::PaperHost;
@@ -54,13 +55,6 @@ fn open_system_settings(pane: &str) {
         .spawn();
 }
 
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0)
-}
-
 #[derive(Clone, Debug, PartialEq)]
 enum AppAction {
     /// Quit, after asking about unsaved scripts.
@@ -82,6 +76,8 @@ enum AppAction {
     OpenAiSettings,
     /// Open Settings on the Snapshots page.
     OpenSnapshotSettings,
+    /// Open Settings on the Pine Studio page, where the editor's themes are.
+    OpenEditorThemeSettings,
     OpenAlerts,
     /// The price-alert sheet in a chart window saved an alert.
     SavePriceAlert {
@@ -143,6 +139,12 @@ pub struct DegenViewApp {
     settings_host: Arc<Mutex<SettingsHost>>,
     /// What the user chose about chart snapshots, shared by every window and Settings.
     snapshots: SnapshotHost,
+    /// The forced-liquidation feed every window's panel reads.
+    liquidations: crate::host::liquidation::LiquidationHost,
+    /// The taker-flow feed every window's panel reads.
+    taker_flow: crate::host::taker_flow::TakerFlowHost,
+    /// The order-book feeds, one per market a panel is looking at.
+    depth: crate::host::depth::DepthHost,
     /// The editor's themes and typography, shared by every window and Settings.
     editor_themes: EditorThemeHost,
     /// The MCP server, the questions its clients raise, and what the app remembers between
@@ -161,7 +163,10 @@ pub struct DegenViewApp {
     actions: Arc<Mutex<Vec<AppAction>>>,
     session: SessionState,
     /// The root window is a hidden 1×1 surface; it is asked to hide once, because every viewport
-    /// command asks egui for another frame.
+    /// command asks egui for another frame. Windows, macOS and X11 show it for eframe's first frame
+    /// and this hides it. Wayland cannot hide a window, so the root is built hidden and
+    /// `degenview-eframe` (eframe with a Wayland fix) never presents it there; it never maps, and its
+    /// passes never wait on frame callbacks.
     root_hidden: bool,
 }
 
@@ -271,7 +276,7 @@ impl DegenViewApp {
         }));
         let sync = {
             let ctx = creation.egui_ctx.clone();
-            let backups = crate::store::data_dir()
+            let backups = crate::paths::data_dir()
                 .map(|dir| dir.join("SyncBackups"))
                 .unwrap_or_else(|| std::env::temp_dir().join("DegenViewSyncBackups"));
             crate::host::sync::SyncHost::new(
@@ -315,7 +320,7 @@ impl DegenViewApp {
                 vec![TabSlot::new(TabContent::Chart(Box::new(
                     ChartWorkspace::empty(
                         first_id,
-                        Timeframe::Day,
+                        Timeframe::DAY_1,
                         Arc::clone(&watchlist),
                         quote_book.clone(),
                         quote_coordinator.clone(),
@@ -357,6 +362,7 @@ impl DegenViewApp {
                         Some(TabSlot::new(TabContent::Pine(Box::new(PineStudio::new(
                             id,
                             store.clone(),
+                            editor_themes.clone(),
                         )))))
                     }
                     PersistedTab::Special(_) | PersistedTab::Unknown(_) => None,
@@ -385,6 +391,9 @@ impl DegenViewApp {
             trading_hub,
             settings_host,
             snapshots,
+            liquidations: crate::host::liquidation::LiquidationHost::default(),
+            taker_flow: crate::host::taker_flow::TakerFlowHost::default(),
+            depth: crate::host::depth::DepthHost::default(),
             editor_themes,
             mcp,
             alerts,
@@ -430,6 +439,7 @@ impl eframe::App for DegenViewApp {
             self.broker_host.revision(),
         );
         self.tick_broker_notices();
+        self.tick_paper_sound();
         self.broker_host.tick_quotes();
         self.tabs.tick_links(ctx);
         self.tabs.windows().restore_frames(

@@ -9,7 +9,9 @@
 
 use crate::format::civil_from_days;
 use crate::lock::lock;
+use crate::model::Timeframe;
 use crate::model::portfolio::PortfolioCurrency;
+use crate::service::net::agent::FollowingAgent;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -49,30 +51,33 @@ pub trait FxTransport: Send + Sync {
 }
 
 pub struct UreqFxTransport {
-    agent: ureq::Agent,
+    agent: FollowingAgent,
 }
 
 impl Default for UreqFxTransport {
     fn default() -> Self {
-        let config = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(20)))
-            .http_status_as_error(false)
-            .build();
         Self {
-            agent: ureq::Agent::new_with_config(config),
+            agent: FollowingAgent::new(|config| {
+                config
+                    .timeout_global(Some(Duration::from_secs(20)))
+                    .http_status_as_error(false)
+            }),
         }
     }
 }
 
 impl FxTransport for UreqFxTransport {
     fn get(&self, url: &str) -> Result<HttpReply, TransportError> {
-        let mut response = self.agent.get(url).call().map_err(|error| match error {
-            ureq::Error::Timeout(_)
-            | ureq::Error::Io(_)
-            | ureq::Error::HostNotFound
-            | ureq::Error::ConnectionFailed => TransportError::Retryable(error.to_string()),
-            other => TransportError::Fatal(other.to_string()),
-        })?;
+        let mut response = self
+            .agent
+            .get_following(url, &[])
+            .map_err(|error| match error {
+                ureq::Error::Timeout(_)
+                | ureq::Error::Io(_)
+                | ureq::Error::HostNotFound
+                | ureq::Error::ConnectionFailed => TransportError::Retryable(error.to_string()),
+                other => TransportError::Fatal(other.to_string()),
+            })?;
         let status = response.status().as_u16();
         let retry_after = response
             .headers()
@@ -347,7 +352,7 @@ fn system_now_ms() -> i64 {
 
 fn binance_btc_spot() -> Option<f64> {
     let source = crate::service::for_source(crate::model::DataSource::Binance);
-    let bars = source.fetch_klines("BTCUSDT", "1h", 1).ok()?;
+    let bars = source.fetch_klines("BTCUSDT", Timeframe::HOUR_1, 1).ok()?;
     bars.last().map(|bar| bar.close)
 }
 

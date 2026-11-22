@@ -51,10 +51,12 @@ plot, by whether a drawing gesture claimed it (`DrawingLayer::claims_drag`, chec
 | Double-click the time axis | Newest bars at the default spacing. |
 | Reset button | Both of the above. |
 | Scroll / zoom buttons | As before; the scroll buttons stop at the newest bar, only a drag goes on into empty space. |
-| Wheel | Zoom (unchanged). |
+| Wheel | Zoom the bars about the right edge, as the time-axis drag and the zoom buttons do (`HorizontalViewport::zoom_at` with the anchor at 1, which is `set_visible`). |
+| Ctrl/⌘ + wheel, trackpad pinch | Zoom the bars about the pointer: the bar under it stays under it (`zoom_at`; `f` is the pointer's fraction of the plot's width, `right_offset += (1 − f)(S − S′)` for `S` slots before and `S′` after, the offset moved before it is clamped). egui turns both into one zoom factor (spreading shows fewer bars). A pointer off the plot zooms about the right edge. |
+| Wheel, Ctrl/⌘ + wheel or pinch over the price axis | Stretches the price range as dragging the axis does (`VerticalViewport::stretch`, applied to the current range each frame; wheeling up makes the candles taller like dragging up). Autoscale stays on; a manual range scales about its centre. The time is left alone. |
 | Sideways trackpad swipe | Scrolls through time (swiping right shows older bars). Mostly vertical swipes still zoom. |
 | Escape during a drag | The view returns to where the press found it; the rest of the drag is ignored. The Escape is reported as consumed so nothing else answers it. |
-| Cursor | Crosshair over the plot (unless a drawing chose one), a grabbing hand while panning, resize arrows on the axes. |
+| Cursor | The chosen cursor's pointer over the plot (crosshair for Cross, hidden for Dot, the platform arrow for Arrow, unless a drawing chose one; [Chart cursors](chart-cursors.md)), a grabbing hand while panning, resize arrows on the axes. |
 
 A drag that began on a drawing handle or body edits the drawing; a drag on a **locked** drawing pans
 (the layer starts no gesture for it); with a drawing tool active the drag draws. Panning produces no
@@ -70,7 +72,7 @@ Linking the charts of a workspace is built on this viewport: see [linked charts]
 
 The magnifying-glass tile under the Ruler arms a **mode** (`DrawingTools::is_zoom_armed`), not a
 drawing tool: there is no `Tool` variant, no `Geometry`, nothing stored, synced or put in a
-template. The zoom itself is an undo step (below). Arming it puts any drawing tool down and arming a drawing tool (or the crosshair tile, or
+template. The zoom itself is an undo step (below). Arming it puts any drawing tool down and arming a drawing tool (or picking a cursor, or
 Escape) puts it down; a finished zoom does too, whatever the Keep drawing setting says.
 
 | Input | Result |
@@ -182,13 +184,18 @@ while one is in flight (a bar that opened meanwhile moves the oldest bar held, a
 for with the old end, would leave it missing); the chart holds at most 100,000 candles.
 
 `DataSource::supports_older_history(timeframe)` says what can page. Coarser bars (1w, 1M, 3M, 1Y)
-are folded from finer pages with `service::fold_calendar`, whose first bucket is dropped when the
+are folded from finer pages with `model::market::bucket::fold`, whose first bucket is dropped when the
 page was cut by the request, so a bar is never split across two pages.
 
 | Provider | Older pages |
 | --- | --- |
 | Binance | Yes, every timeframe (3M / 1Y fold monthly klines). |
 | Coinbase | Yes, every timeframe (daily or hourly pages of 290, folded). Not verified live. 1m to 4h (for Pine's requests, not the chart) were fetched live once: no gaps, bars on UTC boundaries. |
+| MEXC | Yes, in windows: its `/klines` ignores an `endTime` alone, so an older page is a `startTime` + `endTime` window of up to 500 candles, up to 20,000 base candles a request. One-minute candles reach back about a month, 5- to 30-minute ones at least 320 days, hours and up years. Its oldest days, weeks and months (before about 2018-12) are cut at UTC+8 midnight and are left out, so daily history starts where it is on the grid. Bucket opens match Binance's (`live_sources_cut_the_same_buckets`). |
+| Gate.io | Yes, to a limit: it refuses a request that reaches 10,000 points back in the interval asked for, so a chart holds the newest 8,900 candles of an interval (a week of 1m, a month of 5m, a year of 1h, 24 years of 1D), then an older page is empty. Pages of 1,000 with a `to` cursor, folded. Bucket opens match Binance's (`live_sources_cut_the_same_buckets`). |
+| Bybit | Yes, every timeframe (`kline` pages of 1,000 with an `end` cursor, folded, at most 60 pages = 60,000 base candles). Bucket opens match Binance's (`live_sources_cut_the_same_buckets`). Weeks and months reach back only to the 2021 listing. |
+| Kraken | Once. Its `OHLC` always answers the newest 720 candles of an interval (`since` cannot page back), so a chart holds 12 hours of 1m, 30 days of 1h, 120 days of 4h and 2 years of 1D: the first 500 load with the chart, the first older page brings the other 220 and the next one is empty. 1W / 1M / 1Y fold from those days, and a fold's first fragment is dropped. |
+| OKX | Yes, every timeframe (`history-candles` pages of 300 with an `after` cursor, folded; spaced 100 ms for its 20 requests per 2 seconds). Bucket opens match Binance and Coinbase (`live_sources_cut_the_same_buckets`). |
 | Alpaca | Yes, every timeframe (needs the API keys; `start`/`end` bars). Not verified live. |
 | DexScreener | Hourly only. GeckoTerminal's free API serves the last 180 days (`before_timestamp` older than that is HTTP 401, taken as the start of history), so daily bars arrive whole (about 180) and 1W / 1M / 3M / 1Y are shallow by nature. |
 | CoinGecko, prediction markets, CoinMarketCap | No: no time-range fetch is implemented. The chart stops at what a refresh brings. |

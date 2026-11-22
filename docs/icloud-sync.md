@@ -37,12 +37,12 @@ against SQLite, and every sync problem leaves the app fully usable.
 | Price alert definitions | one per alert | arrive **switched off** on other Macs, see below |
 | Portfolios | one per portfolio, and one per transaction | valuation history is not synced; it is rebuilt on each Mac |
 | Paper trading | one record per account holding the account, its orders, fills, positions, events, closed trades and journal, and which Mac runs it | see [Portfolios and paper trading](#portfolios-and-paper-trading) |
-| Preferences | `appTheme`, `drawing.defaults`, `drawing.prefs`, `snapshot.prefs` (which provider is on, each provider's non-secret settings merged per provider, scale, include-trading only), `editor.prefs` (which editor theme, the editor font, size and line height) | |
+| Preferences | `appTheme`, `drawing.defaults`, `drawing.prefs`, `drawing.favorites` (the starred drawing tools and cursors, in the order starred; an older build keeps the cursors' names it does not know), `snapshot.prefs` (which provider is on, each provider's non-secret settings merged per provider, scale, include-trading only), `editor.prefs` (which editor theme, the editor font, size and line height), `indicatorPicker.favorites`, `timeframePicker.pinned` (the custom timeframes pinned in the picker), `chart.defaultTemplate` (the id of the chart template new charts start from; a Mac that does not have that template yet starts them from the app's look until it arrives) | |
 
 Never synced: market and icon caches, portfolio valuation history, which paper account or
 portfolio is selected, live paper quotes, webhook endpoints and their Keychain secrets, API keys, **live trading** (broker credentials, orders sent and not yet confirmed, and how to trade: a Mac must never act on another Mac's live orders, and a trading credential never leaves the Mac it was entered on), MCP clients/tokens/port and the MCP activity log, Pine alert subscriptions
 (they bind device-local chart ids), the open tabs and windows, alert runtime state and history,
-snapshot consent and the snapshot providers' API keys and tokens, and `content.prefs` (whether a Post card may fetch a preview from X). Every document table and `setting` key is classified in
+snapshot consent and the snapshot providers' API keys and tokens, `content.prefs` (whether a Post card may fetch a preview from X), and `drawing.favoritesBar` (where the favorite tools' bar sits and whether it is hidden: it suits one screen). Every document table and `setting` key is classified in
 `src/sync/record/policy.rs`, and a test fails when one is added without a decision; unclassified means
 local.
 
@@ -132,8 +132,11 @@ reported (asset upload is not implemented). A deflated record cannot unpack past
 
 Entity ids are nanosecond timestamps (watchlists, layouts, templates, alerts) or random 128-bit
 (scripts), so they do not collide across Macs. Chart ids are stable inside a layout; drawing ids
-are per chart, so a drawing is keyed `layout.chart.drawing`. When two Macs give different
-drawings the same id, the local one is renumbered so both survive. Each Mac's Favorites list has
+are per chart (one counter for every market the chart showed: a drawing names its market inside its
+body, `{"Shape": {"market": "BINANCE:BTCUSDT", "since": 2, …}}`), so a drawing is keyed `layout.chart.drawing`. When two Macs give different
+drawings the same id, the local one is renumbered so both survive; so is an unsaved local drawing
+whose id a drawing of another market arrives with (`separate_ids`, in the tab's merge of an
+adopted layout: markets merge one by one, ids are per chart). Each Mac's Favorites list has
 a different local id, so it syncs as the singleton `watchlist.favorites` and keeps its own id.
 
 ## Pictures
@@ -180,9 +183,10 @@ stays safe. (Read from the code; it has not been tried between two real builds.)
 |---|---|
 | A new drawing tool (a new `Geometry` variant in the existing drawing record, same schema number) | Accepts the record and stores it. The drawing decodes as `Drawing::Unreadable`: it is not drawn, selected or edited, is listed in the Object tree as "From a newer version" (deletable, nothing else), and is written back and synced byte for byte. |
 | A new field on an existing tool, marked `"since": N` above the older build's `DRAWING_FORMAT` | The same: kept whole as `Unreadable`, never re-saved without the field. |
+| Drawings that name their market (`"market"`, `"since": 2`; every drawing from this version on) | The same: every such drawing is kept whole as `Unreadable`, so the build shows no drawing of this layout until it is updated, and never strips the market. |
 | A new field on an existing tool **without** the marker | The older build decodes the drawing, ignores the field and re-saves it without it, and the stripped copy syncs back over the newer one. Not allowed: see the rule below. |
 | A new record kind (as pictures were), or a higher `SCHEMA_VERSION` | Kept in the inbox, applied by the first launch that reads it (see above). |
-| A new tool or magnet value in `drawing.prefs` | That one option falls back to its default; the others are kept. (The fallback is then what this build saves.) |
+| A new tool, magnet or cursor value in `drawing.prefs` (and the values-tooltip switch) | That one option falls back to its default; the others are kept. (The fallback is then what this build saves.) An older build that re-saves the setting leaves out the `cursor` it does not know, and that copy syncs back. |
 | A default style (`drawing.defaults`) or a template for a new tool | **Not read at all**: both are read whole, so one entry for a tool this build lacks leaves them unreadable. The build then refuses to change defaults or templates ("Default styles could not be read ...") and leaves them as written. Drawings are unaffected. Every new tool has this effect, once a default or a template is saved for it. |
 
 The rule: **a new tool is a new `Geometry` variant. A change to an existing tool's stored form that an

@@ -39,7 +39,7 @@ fn persisted_session_round_trips() {
         next_id: 3,
         tabs: vec![PersistedTab::Chart(PersistedWorkspace {
             id: 2,
-            timeframe: Timeframe::Hour,
+            timeframe: Timeframe::HOUR_1,
             watchlist_visible: true,
             charts: vec![PersistedChart {
                 id: 1,
@@ -50,7 +50,7 @@ fn persisted_session_round_trips() {
                 y_zoom: 1.0,
                 indicators: crate::model::IndicatorConfig::default(),
                 appearance: crate::model::ChartAppearance::default(),
-                drawings: Vec::new(),
+                drawings: Default::default(),
                 pine_instances: Vec::new(),
                 candle_count: 0,
                 viewport: Default::default(),

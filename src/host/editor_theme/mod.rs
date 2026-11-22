@@ -13,13 +13,13 @@
 //! this Mac, the editor keeps the system's monospace font and the saved name is kept, so the font
 //! comes back when it does.
 
+use crate::clock::now_ms;
 use crate::lock::lock;
 use crate::model::editor_theme::codec;
 use crate::model::editor_theme::{
     BUNDLED_FONT, BuiltInTheme, ColorKey, EditorPrefs, EditorTheme, Rgba, SYSTEM_FONT, ThemeBook,
     ThemeError, ThemeId, ThemeSelection, ThemeSource, Typography, TypographyOverride, new_user_id,
 };
-use crate::model::watchlist::now_ms;
 use crate::service::editor_theme::files;
 use crate::service::editor_theme::fonts::{FontCatalog, check_outlines, read_font};
 use crate::service::work_queue::{self, Pending};
@@ -97,6 +97,14 @@ pub struct View {
     pub fonts: Arc<Vec<String>>,
     pub unwritable: Option<String>,
     pub notice: Option<String>,
+}
+
+/// What a menu of themes needs: the theme worn and the names of the custom ones, in the order
+/// Settings lists them. Far smaller than a [`View`], which copies every custom theme's colours.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Choices {
+    pub selected: ThemeSelection,
+    pub customs: Vec<(ThemeId, String)>,
 }
 
 /// A custom theme as a tile and an editor need it.
@@ -514,6 +522,20 @@ impl EditorThemeHost {
                 .unwrap_or_else(|| Arc::new(family_list(std::iter::empty()))),
             unwritable: inner.themes_unwritable.clone(),
             notice: inner.notice.clone(),
+        }
+    }
+
+    /// The themes to pick from and the one worn, for a menu.
+    pub fn choices(&self) -> Choices {
+        let inner = self.lock();
+        Choices {
+            selected: inner.selection(),
+            customs: inner
+                .book
+                .saved()
+                .iter()
+                .map(|theme| (theme.id, theme.name.clone()))
+                .collect(),
         }
     }
 

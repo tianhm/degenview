@@ -6,6 +6,7 @@
 //! they go through the bridge and run on the app thread like every other mutation.
 
 use crate::mcp::bridge::{McpError, McpReply, REQUEST_TIMEOUT};
+use crate::mcp::chart::control::parse_timeframe;
 use crate::mcp::market::{
     MAX_EDIT_MARKETS, MAX_ENTRY_PAGE, MAX_QUOTE_MARKETS, QuoteInfo, QuotesResult,
     SearchSourceError, SymbolSearchResult, WatchlistChangeResult, WatchlistCommand,
@@ -52,9 +53,14 @@ const QUOTE_POLL: Duration = Duration::from_millis(100);
 const DEFAULT_ENTRY_PAGE: usize = 100;
 
 /// Providers searched when the caller names none: every one a market can be charted from.
-const ALL_SOURCES: [McpSource; 6] = [
+const ALL_SOURCES: [McpSource; 11] = [
     McpSource::Binance,
     McpSource::Coinbase,
+    McpSource::Okx,
+    McpSource::Kraken,
+    McpSource::Bybit,
+    McpSource::Gateio,
+    McpSource::Mexc,
     McpSource::Coingecko,
     McpSource::Dexscreener,
     McpSource::Alpaca,
@@ -67,7 +73,7 @@ pub struct MarketRef {
     /// The market data provider.
     pub source: McpSource,
     /// The provider's own symbol, as `degenview_search_symbols` returns it: `BTCUSDT` (binance),
-    /// `BTC-USD` (coinbase), `bitcoin` (coingecko), `chain/address` (dexscreener), `AAPL`
+    /// `BTC-USD` (coinbase), `BTC-USDT` (okx), `BTC/USD` (kraken), `BTCUSDT` (bybit), `BTC_USDT` (gateio), `BTCUSDT` (mexc), `bitcoin` (coingecko), `chain/address` (dexscreener), `AAPL`
     /// (alpaca).
     #[schemars(length(min = 1, max = 128))]
     pub symbol: String,
@@ -106,8 +112,10 @@ pub struct MarketCandlesParams {
     /// The provider's own symbol, as `degenview_search_symbols` returns it.
     #[schemars(length(min = 1, max = 128))]
     pub symbol: String,
-    /// The bar length.
-    pub timeframe: crate::mcp::chart::control::McpTimeframe,
+    /// The bar length: a count and a unit (m minutes, h hours, D days, W weeks, M months, or 1Y),
+    /// for example 15m, 4h, 1D, 2W, 3M.
+    #[schemars(length(min = 1, max = 16))]
+    pub timeframe: String,
     /// How many of the newest bars to return, 1 to 1000. Default 200. A provider may hold fewer.
     #[schemars(range(min = 1, max = 1000))]
     pub limit: Option<u32>,
@@ -469,7 +477,7 @@ fn search_all(
 impl DegenViewMcp {
     #[tool(
         name = "degenview_search_symbols",
-        description = "Search the market data providers for symbols by ticker or name. Returns, per hit, the `source` and `symbol` to pass to degenview_add_chart, degenview_get_quotes, degenview_create_price_alert and the watchlist tools, plus how the app labels it. Searches Binance, Coinbase, CoinGecko, DEXScreener and (with API keys) Alpaca stocks side by side; a provider that fails is reported in `source_errors` while the others still answer. Hits only prove the provider lists the market; ask degenview_get_quotes for a price.",
+        description = "Search the market data providers for symbols by ticker or name. Returns, per hit, the `source` and `symbol` to pass to degenview_add_chart, degenview_get_quotes, degenview_create_price_alert and the watchlist tools, plus how the app labels it. Searches Binance, Coinbase, OKX, Kraken, Bybit, Gate.io, MEXC, CoinGecko, DEXScreener and (with API keys) Alpaca stocks side by side; a provider that fails is reported in `source_errors` while the others still answer. Hits only prove the provider lists the market; ask degenview_get_quotes for a price.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -590,7 +598,7 @@ impl DegenViewMcp {
 
     #[tool(
         name = "degenview_get_market_candles",
-        description = "Read the price candles of any market straight from its provider, with no chart needed: the newest `limit` bars (default 200, max 1000) at 1H, 1D, 1W, 1M, 3M or 1Y, oldest first, as rows under named `columns` (time, open, high, low, close, volume). The same bars a chart of that market would load, through the same provider calls and caches, so it can lag a live chart by a refresh. Slow providers (CoinGecko, DEXScreener) are rate limited and may take several seconds. Older history than the newest `limit` bars is not available here; open a chart and scroll back, or use degenview_get_candles on one. Volume is null where a provider reports none. For many markets at once use degenview_get_quotes.",
+        description = "Read the price candles of any market straight from its provider, with no chart needed: the newest `limit` bars (default 200, max 1000) at any timeframe (a count and unit: m minutes, h hours, D days, W weeks, M months, or 1Y; e.g. 15m, 4h, 1D, 2W, 3M), oldest first, as rows under named `columns` (time, open, high, low, close, volume). The same bars a chart of that market would load, through the same provider calls and caches, so it can lag a live chart by a refresh. Slow providers (CoinGecko, DEXScreener) are rate limited and may take several seconds. Older history than the newest `limit` bars is not available here; open a chart and scroll back, or use degenview_get_candles on one. Volume is null where a provider reports none. For many markets at once use degenview_get_quotes.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -610,6 +618,7 @@ impl DegenViewMcp {
                 "limit must be between 1 and {MAX_CANDLES}"
             )));
         }
+        let timeframe = parse_timeframe(&params.timeframe)?;
         let source = params.source.data_source();
         let instrument = market_item(source, &params.symbol)
             .map_err(invalid)?
@@ -619,7 +628,6 @@ impl DegenViewMcp {
                 "Alpaca needs API credentials: add them in DegenView Settings > API Keys".into(),
             )));
         }
-        let timeframe = params.timeframe.timeframe();
         let Some(permit) = self.shared.try_candle_job() else {
             return Err(failure(&McpError::ResourceLimit(
                 "Too many candle requests are running; try again shortly".into(),
@@ -633,7 +641,7 @@ impl DegenViewMcp {
             // exactly as it does for a chart.
             crate::service::work_queue::submit_for(source, move || {
                 let _permit = permit;
-                let _ = sender.send(fetch(source, &symbol, timeframe.interval(), limit as u32));
+                let _ = sender.send(fetch(source, &symbol, timeframe, limit as u32));
             });
         }
         let candles = match tokio::time::timeout(CANDLE_DEADLINE, receiver).await {
@@ -655,11 +663,11 @@ impl DegenViewMcp {
             workspace_id: 0,
             chart_id: 0,
             instrument: instrument.clone(),
-            timeframe: timeframe.label().to_owned(),
+            timeframe: timeframe.label(),
             chart_type: crate::model::ChartType::Candles,
             older_supported: false,
             replay_ms: None,
-            now_ms: crate::model::watchlist::now_ms(),
+            now_ms: crate::clock::now_ms(),
         };
         let result = candles_result(&meta, &candles, limit, None);
         let mut notes = result.notes;

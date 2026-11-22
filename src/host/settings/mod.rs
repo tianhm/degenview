@@ -10,10 +10,14 @@ use crate::service::cache::control;
 use crate::service::cache::disk::{CacheStats, ClearOutcome};
 use crate::service::keychain::webhook_secrets::KeychainWebhookSecretStore;
 use crate::service::llm::prefs::AiPrefs;
+use crate::service::net::proxy::ProxyConfig;
+use crate::service::net::proxy::{self, ApplyReport};
 use crate::service::webhook::delivery::{self, Mode, UreqTransport, WebhookSecretStore};
 use crate::service::work_queue::{self, Pending};
 use crate::store::Store;
+use crate::store::frame_cache::ChangeCached;
 use crate::ui::settings::card::StatusMessage;
+use crate::ui::settings::network::NetworkAction;
 use crate::ui::settings::snapshots::SnapshotsAction;
 use crate::ui::settings::storage::StorageAction;
 use crate::ui::settings::window::{SettingsAction, SettingsInput, SettingsState};
@@ -66,6 +70,8 @@ pub struct SettingsHost {
     /// The saved assistant settings, read from the store when Settings first needs them.
     ai_prefs: Option<AiPrefs>,
     ai_prefs_read_at: Option<std::time::Instant>,
+    /// The `net.proxy` setting the Network page shows, read again only after a write.
+    network_config: ChangeCached<ProxyConfig>,
     /// When the snapshot choices were last read again, for what iCloud Sync applied meanwhile.
     snapshots_read_at: Option<std::time::Instant>,
     state: SettingsState,
@@ -130,6 +136,13 @@ impl SettingsHost {
         self.open = true;
     }
 
+    /// Opens Settings on the Pine Studio page, where the editor's themes are (the Pine Studio's
+    /// Theme menu, "Configure Themes…").
+    pub fn open_editor_themes(&mut self) {
+        self.state.section = crate::ui::settings::window::SettingsSection::PineStudio;
+        self.open = true;
+    }
+
     /// Opens Settings on the Webhooks page (an alert editor's "Add in Settings").
     pub fn open_webhooks(&mut self) {
         self.state.section = crate::ui::settings::window::SettingsSection::Webhooks;
@@ -183,6 +196,11 @@ impl SettingsHost {
             self.ai_prefs_read_at = Some(std::time::Instant::now());
         }
         let ai_prefs = self.ai_prefs.clone().unwrap_or_default();
+        let network_config = self
+            .network_config
+            .get(store.change_stamp(), || ProxyConfig::load(store));
+        let proxy_status = proxy::status();
+        self.collect_network();
         let input = SettingsInput {
             notifications,
             health,
@@ -199,6 +217,10 @@ impl SettingsHost {
                 secrets: self.snapshots.secrets(),
             },
             ai: crate::ui::settings::ai::AiSettingsInput { prefs: &ai_prefs },
+            network: crate::ui::settings::network::NetworkInput {
+                config: &network_config,
+                status: &proxy_status,
+            },
             updates,
             sync,
             trading_hub,
@@ -213,6 +235,7 @@ impl SettingsHost {
                 }
                 SettingsAction::Storage(action) => self.apply_storage(action, ctx),
                 SettingsAction::Snapshots(action) => self.apply_snapshots(action, store),
+                SettingsAction::Network(action) => self.apply_network(action, store, ctx),
                 SettingsAction::Ai(crate::ui::settings::ai::AiAction::SavePrefs(prefs)) => {
                     if let Err(error) = prefs.save(store) {
                         self.state.ai.status = Some(StatusMessage::error(format!(
@@ -244,6 +267,10 @@ impl SettingsHost {
                 SettingsAction::UpdateNotifications(settings) => {
                     out.push(SettingsHostAction::UpdateNotifications(settings));
                 }
+                SettingsAction::SetPaperPrefs(prefs) => {
+                    // Applied in memory even when the save fails, like the theme.
+                    let _ = trading_hub.set_paper_prefs(store, prefs);
+                }
                 SettingsAction::RetryRegistration => {
                     out.push(SettingsHostAction::RetryRegistration);
                 }
@@ -261,6 +288,39 @@ impl SettingsHost {
             }
         }
         out
+    }
+
+    /// Saves the proxy setting and hands it to the proxy worker, which applies it whether or not
+    /// this window stays open. A failure to save is said on the page.
+    fn apply_network(&mut self, action: NetworkAction, store: &Store, ctx: &egui::Context) {
+        let NetworkAction::Save { config, password } = action;
+        if let Err(error) = config.save(store) {
+            self.state.network.status = Some(StatusMessage::error(format!(
+                "Could not save the settings: {error}"
+            )));
+            return;
+        }
+        self.state.network.status = None;
+        let repaint = ctx.clone();
+        proxy::submit(
+            config,
+            password,
+            Arc::new(move || repaint.request_repaint()),
+        );
+    }
+
+    /// Shows what the proxy worker has to say, which waits here while the window is closed.
+    fn collect_network(&mut self) {
+        let Some(report) = proxy::take_report() else {
+            return;
+        };
+        self.state.network.status = Some(match report {
+            ApplyReport::PasswordSaved => StatusMessage::ok(crate::platform::saved_securely()),
+            ApplyReport::PasswordNotKept(error) => StatusMessage::error(format!(
+                "The password could not be saved for later ({}). It works until you quit DegenView.",
+                error.0
+            )),
+        });
     }
 
     /// Records the results of finished tests, and keeps the window repainting while any are

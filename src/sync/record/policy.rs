@@ -258,9 +258,12 @@ pub fn setting_policy(key: &str) -> SettingPolicy {
         "appTheme"
         | "drawing.defaults"
         | "drawing.prefs"
+        | "drawing.favorites"
         | "snapshot.prefs"
         | "editor.prefs"
-        | "indicatorPicker.favorites" => SettingPolicy::Portable(Merge::LastWriterWins),
+        | "indicatorPicker.favorites"
+        | "timeframePicker.pinned"
+        | "chart.defaultTemplate" => SettingPolicy::Portable(Merge::LastWriterWins),
         "watchlist.flags" => SettingPolicy::Portable(Merge::ThreeWay),
         _ => SettingPolicy::Local,
     }
@@ -341,12 +344,16 @@ mod tests {
             "scriptDebug.state",
             // Names this user's own account and server.
             "ai.prefs",
+            // The proxy of this Mac's own network (its password is in the Keychain).
+            "net.proxy",
             // Their prompts about their own scripts, and the model's replies.
             "ai.history",
             "scriptPreview.market",
             "scripts.demosSeeded",
             "addTicker.recentMarkets",
             "paper.selectedAccountID",
+            // Whether this Mac plays a sound on a paper fill.
+            "paper.prefs",
             // Live trading: orders sent and not yet confirmed at one broker on this Mac, and
             // the choices about how to trade there. Another Mac must never act on either.
             "broker.pending",
@@ -363,6 +370,8 @@ mod tests {
             // Which parts of a chart a Tab Linking colour keeps in step; the tabs' colours are in
             // the `tab` table, which is local too.
             "tab.link_toggles",
+            // Where the favorite drawing tools' bar sits suits this screen, not another Mac's.
+            "drawing.favoritesBar",
         ] {
             assert_eq!(setting_policy(key), SettingPolicy::Local, "{key}");
         }
@@ -393,6 +402,14 @@ mod tests {
         );
         assert_eq!(
             setting_policy("indicatorPicker.favorites"),
+            SettingPolicy::Portable(Merge::LastWriterWins)
+        );
+        assert_eq!(
+            setting_policy(crate::store::drawing_favorites::KEY),
+            SettingPolicy::Portable(Merge::LastWriterWins)
+        );
+        assert_eq!(
+            setting_policy(crate::store::pinned_timeframes::KEY),
             SettingPolicy::Portable(Merge::LastWriterWins)
         );
     }
