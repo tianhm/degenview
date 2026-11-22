@@ -1600,7 +1600,16 @@ fn fetch_chart_klines(
     let duration_key = duration_ns.to_string();
 
     while start.elapsed() < REQUEST_DEADLINE {
-        let merged = read_and_merge_pack(&mut socket, &mut state)?;
+        let merged = match read_and_merge_pack(&mut socket, &mut state) {
+            Ok(m) => m,
+            Err(err) => {
+                let fallback = extract_klines(&state, symbol, &duration_key, duration_secs * 1_000);
+                if !fallback.is_empty() {
+                    return Ok(fallback);
+                }
+                return Err(err);
+            }
+        };
         if !merged {
             continue;
         }
@@ -1609,6 +1618,10 @@ fn fetch_chart_klines(
             .and_then(Value::as_bool)
             .unwrap_or(false);
         let chart = state.pointer(&format!("/charts/{chart_id}"));
+        let chart_more_data = chart
+            .and_then(|c| c.get("more_data"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let state_ready = chart.and_then(|c| c.get("state")).is_some_and(|s| {
             s.get("ins_list").and_then(Value::as_str) == Some(symbol)
                 && s.get("duration").and_then(Value::as_i64) == Some(duration_ns)
@@ -1620,11 +1633,15 @@ fn fetch_chart_klines(
 
         if state_ready
             && !more_data
-            && left_id.is_some_and(|id| id >= 0)
-            && right_id.is_some_and(|id| id >= 0)
+            && !chart_more_data
+            && let (Some(left), Some(right)) = (left_id, right_id)
+            && left >= 0
+            && right >= left
         {
+            let expected = (right - left + 1) as usize;
             let klines = extract_klines(&state, symbol, &duration_key, duration_secs * 1_000);
-            if !klines.is_empty() {
+            let full_window = left == 0 || expected >= width as usize;
+            if !klines.is_empty() && full_window {
                 let _ = send_json(
                     &mut socket,
                     &json!({
@@ -1925,6 +1942,16 @@ mod tests {
             .fetch_klines("KQ.m@SHFE.rb", "15m", 20)
             .expect("klines failed");
         assert!(!klines.is_empty(), "expected klines for KQ.m@SHFE.rb");
+
+        for sym in ["KQ.m@SHFE.rb", "KQ.m@CFFEX.IF", "SHFE.rb2701"] {
+            let daily = crate::service::fetch_klines(DataSource::TqSdk, sym, "1d", 500)
+                .unwrap_or_else(|e| panic!("daily klines failed for {sym}: {e:?}"));
+            assert!(
+                daily.len() >= 10,
+                "expected >= 10 daily klines for {sym}, got {}",
+                daily.len()
+            );
+        }
 
         let quotes = quotes(&[QuoteRequest {
             symbol: "KQ.m@SHFE.rb".to_owned(),

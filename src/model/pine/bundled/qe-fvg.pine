@@ -1,0 +1,80 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Ahmed - Quant-Edge Indicators
+//@version=6
+indicator("Inversion Fair Value Gaps [Quant-Edge]", "IFVG", overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500)
+
+FVGVaP = input.int(500, "FVG & IFVG Validity Period (Bar)", minval = 10, maxval = 4998)
+PShowDeIFVG = input.bool(true, "Show Bearish Inversion FVG")
+PShowSuIFVG = input.bool(true, "Show Bullish Inversion FVG")
+OCShowDeIFVG = input.color(color.new(#ff5252, 75), "Bearish IFVG Color")
+OCShowSuIFVG = input.color(color.new(#4caf50, 75), "Bullish IFVG Color")
+PFVGFilter = input.bool(true, "ATR FVG Filter")
+PFVGFilterMult = input.float(0.25, "Min Gap (x ATR)", minval = 0.0, step = 0.05)
+
+atrVal = ta.atr(14)
+minGap = PFVGFilter ? atrVal * PFVGFilterMult : 0.0
+
+// Standard 3-candle FVG detection
+bullFvg = low > high[2] and (low - high[2]) >= minGap
+bearFvg = high < low[2] and (low[2] - high) >= minGap
+
+var array<float> bullTop = array.new<float>()
+var array<float> bullBot = array.new<float>()
+var array<int>   bullBar = array.new<int>()
+
+var array<float> bearTop = array.new<float>()
+var array<float> bearBot = array.new<float>()
+var array<int>   bearBar = array.new<int>()
+
+if bullFvg
+    array.push(bullTop, low)
+    array.push(bullBot, high[2])
+    array.push(bullBar, bar_index)
+
+if bearFvg
+    array.push(bearTop, low[2])
+    array.push(bearBot, high)
+    array.push(bearBar, bar_index)
+
+bool invBearSignal = false
+bool invBullSignal = false
+
+// Bullish FVG broken downward -> Bearish Inversion FVG
+if array.size(bullBot) > 0
+    for i = array.size(bullBot) - 1 to 0
+        b = array.get(bullBot, i)
+        t = array.get(bullTop, i)
+        idx = array.get(bullBar, i)
+        if bar_index - idx > FVGVaP
+            array.remove(bullTop, i)
+            array.remove(bullBot, i)
+            array.remove(bullBar, i)
+        else if close < b
+            invBearSignal := true
+            if PShowDeIFVG
+                box.new(idx, t, bar_index + 10, b, bgcolor = OCShowDeIFVG, border_color = color.new(#ff5252, 40))
+            array.remove(bullTop, i)
+            array.remove(bullBot, i)
+            array.remove(bullBar, i)
+
+// Bearish FVG broken upward -> Bullish Inversion FVG
+if array.size(bearTop) > 0
+    for i = array.size(bearTop) - 1 to 0
+        t = array.get(bearTop, i)
+        b = array.get(bearBot, i)
+        idx = array.get(bearBar, i)
+        if bar_index - idx > FVGVaP
+            array.remove(bearTop, i)
+            array.remove(bearBot, i)
+            array.remove(bearBar, i)
+        else if close > t
+            invBullSignal := true
+            if PShowSuIFVG
+                box.new(idx, t, bar_index + 10, b, bgcolor = OCShowSuIFVG, border_color = color.new(#4caf50, 40))
+            array.remove(bearTop, i)
+            array.remove(bearBot, i)
+            array.remove(bearBar, i)
+
+plot(ta.ema(close, 20), title = "Reference EMA", color = color.new(color.gray, 80))
+plotshape(invBullSignal, title = "Bullish IFVG", style = shape.triangleup, location = location.belowbar, color = color.green, size = size.tiny)
+plotshape(invBearSignal, title = "Bearish IFVG", style = shape.triangledown, location = location.abovebar, color = color.red, size = size.tiny)

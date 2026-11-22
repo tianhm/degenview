@@ -56,8 +56,28 @@ macro_rules! indicator {
     };
 }
 
+macro_rules! quant_edge_indicator {
+    (
+        $id:literal, $name:literal, $family:ident, $overlay:literal,
+        $summary:literal, $description:literal, [$($alias:literal),* $(,)?]
+    ) => {
+        BundledIndicator {
+            id: $id,
+            name: $name,
+            family: Family::$family,
+            summary: $summary,
+            description: $description,
+            aliases: &[$($alias),*],
+            overlay: $overlay,
+            author: "Ahmed (Quant-Edge)",
+            license: "MPL-2.0",
+            source: include_str!(concat!($id, ".pine")),
+        }
+    };
+}
+
 /// Every bundled indicator: overlays first, then the ones with a pane of their own.
-pub static ALL: [BundledIndicator; 20] = [
+pub static ALL: [BundledIndicator; 36] = [
     indicator!(
         "ichimoku-cloud",
         "Ichimoku Cloud",
@@ -242,6 +262,150 @@ pub static ALL: [BundledIndicator; 20] = [
         "Fast minus slow average of the bar midpoint.",
         "Bill Williams' histogram: a 5-period average of the midpoint minus a 34-period one. Green bars are rising and red bars falling; crossing zero is a momentum shift.",
         ["ao", "bill williams"]
+    ),
+    quant_edge_indicator!(
+        "qe-custom-indicator",
+        "Quant-Edge Candle Counter",
+        Trend,
+        true,
+        "Candle counter, moving average, RSI, and trend mode dashboard.",
+        "Analyzes a configurable lookback of candles with moving average, RSI, and candle/range trend mode classification.",
+        ["quant-edge", "candle counter", "trend mode"]
+    ),
+    quant_edge_indicator!(
+        "qe-fibonacci-fvg",
+        "Quant-Edge Fibonacci + FVG",
+        Structure,
+        true,
+        "Automatic Fibonacci retracement levels combined with Fair Value Gaps.",
+        "Detects swing highs/lows to plot Fibonacci retracements alongside bullish and bearish Fair Value Gaps (FVG).",
+        ["quant-edge", "fibonacci", "fvg"]
+    ),
+    quant_edge_indicator!(
+        "qe-fibonacci-autosignals",
+        "Quant-Edge Fibonacci AutoSignals",
+        Structure,
+        true,
+        "Fibonacci retracement and extension zones with automated buy/sell signals.",
+        "Calculates dynamic Fibonacci retracement and extension levels and emits buy/sell signals on level interactions.",
+        ["quant-edge", "fibonacci", "autosignals"]
+    ),
+    quant_edge_indicator!(
+        "qe-double-rsi-strategy",
+        "Quant-Edge Double RSI Strategy",
+        Momentum,
+        true,
+        "Dual-timeframe RSI strategy combining higher-TF and chart-TF RSI.",
+        "Combines a higher-timeframe RSI filter with chart-timeframe RSI entries and exits.",
+        ["quant-edge", "double rsi", "strategy"]
+    ),
+    quant_edge_indicator!(
+        "qe-larry-connors-rsi-strategy",
+        "Quant-Edge Larry Connors RSI",
+        Momentum,
+        true,
+        "2-period RSI mean-reversion strategy with trend filter.",
+        "Classic Larry Connors 2-period RSI pullback strategy entering oversold dips in an uptrend and exiting on strength.",
+        ["quant-edge", "connors", "rsi2", "strategy"]
+    ),
+    quant_edge_indicator!(
+        "qe-rsi-divergences",
+        "Quant-Edge RSI Divergences",
+        Momentum,
+        false,
+        "RSI oscillator with regular and hidden bullish/bearish divergence detection.",
+        "Plots RSI with overbought/oversold bands and marks pivot divergences between price and RSI.",
+        ["quant-edge", "rsi divergence"]
+    ),
+    quant_edge_indicator!(
+        "qe-rsi-multilayer-entry",
+        "Quant-Edge RSI Multilayer Entry",
+        Momentum,
+        true,
+        "Multi-layer RSI scaling entry indicator with position tracking.",
+        "Tracks layered oversold/overbought RSI entries and plots position state on the price chart.",
+        ["quant-edge", "rsi multilayer"]
+    ),
+    quant_edge_indicator!(
+        "qe-apex-trend",
+        "Quant-Edge Apex Trend",
+        Trend,
+        true,
+        "Apex Trend & Liquidity Master overlay with trend bands and liquidity levels.",
+        "Combines trend-following bands with liquidity sweep and structure signals.",
+        ["quant-edge", "apex trend", "liquidity"]
+    ),
+    quant_edge_indicator!(
+        "qe-fvg",
+        "Quant-Edge Inversion FVG",
+        Structure,
+        true,
+        "Inversion Fair Value Gaps (IFVG) with ICT signals.",
+        "Detects bullish and bearish Fair Value Gaps and tracks inverted FVG zones as support/resistance.",
+        ["quant-edge", "ifvg", "fvg", "ict"]
+    ),
+    quant_edge_indicator!(
+        "qe-mss-choch-bos",
+        "Quant-Edge MSS + CHoCH + BOS",
+        Structure,
+        true,
+        "Market Structure Shift (MSS), Change of Character (CHoCH), and Break of Structure (BOS).",
+        "Identifies fractal swing highs/lows, CHoCH/BOS structural breaks, and fair value gaps.",
+        ["quant-edge", "mss", "choch", "bos", "market structure"]
+    ),
+    quant_edge_indicator!(
+        "qe-trio-liquidity",
+        "Quant-Edge Trio Liquidity",
+        VolumeFlow,
+        true,
+        "Liquidity sweep and close-back confirmation boxes and signals.",
+        "Detects swing high/low liquidity sweeps followed by close-back confirmation.",
+        ["quant-edge", "liquidity", "sweep"]
+    ),
+    quant_edge_indicator!(
+        "qe-btcusd-5m-strategy",
+        "Quant-Edge BTCUSD 5M Strategy",
+        Trend,
+        true,
+        "EMA 200 trend filter with MACD momentum entries for 5-minute charts.",
+        "Uses a 200-period EMA trend bias paired with MACD crossovers and risk-managed exits.",
+        ["quant-edge", "btcusd", "ema200", "strategy"]
+    ),
+    quant_edge_indicator!(
+        "qe-donchian-pullback",
+        "Quant-Edge Donchian Pullback",
+        Volatility,
+        true,
+        "Donchian Channel breakout with pullback entry strategy.",
+        "Identifies Donchian Channel trend direction and enters on controlled pullbacks.",
+        ["quant-edge", "donchian", "pullback", "strategy"]
+    ),
+    quant_edge_indicator!(
+        "qe-eurusd-1m-strategy",
+        "Quant-Edge EURUSD 1M Strategy",
+        Momentum,
+        true,
+        "EMA 9/21 crossover and RSI scalping strategy.",
+        "Fast 9/21 EMA scalping strategy filtered by RSI momentum.",
+        ["quant-edge", "eurusd", "scalping", "strategy"]
+    ),
+    quant_edge_indicator!(
+        "qe-ivan-strategy",
+        "Quant-Edge Ivan Strategy",
+        Trend,
+        true,
+        "Ivan Scherman 200/5 SMA pattern strategy with TP/SL.",
+        "Trades the Ivan Scherman moving-average pullback pattern with fixed take-profit and stop-loss.",
+        ["quant-edge", "ivan", "sma", "strategy"]
+    ),
+    quant_edge_indicator!(
+        "qe-turtle-strategy",
+        "Quant-Edge Turtle Strategy",
+        Volatility,
+        true,
+        "Donchian Turtle strategy with dynamic TP, fixed SL, and 1% risk sizing.",
+        "Implements Donchian Channel breakout entries with ATR/fixed stop-loss and dynamic take-profit.",
+        ["quant-edge", "turtle", "donchian", "strategy"]
     ),
 ];
 

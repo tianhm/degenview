@@ -105,7 +105,8 @@ impl ChartWorkspace {
 
     fn apply_live_kline(&mut self, source: DataSource, symbol: &str, kline: Kline, now: Instant) {
         for chart in self.charts.iter_mut().filter(|chart| {
-            chart.source == source
+            !(chart.candles.is_empty() && chart.loading)
+                && chart.source == source
                 && if source == DataSource::TqSdk {
                     chart.symbol == symbol
                 } else {

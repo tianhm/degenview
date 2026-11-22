@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The most bars the inbox keeps. A feed nobody reads for days (a background tab, a hidden
 /// window) still sees one new bar per symbol per interval, so this is only a backstop.
@@ -114,6 +114,8 @@ impl Drop for TqSdkLiveFeed {
     }
 }
 
+const PEEK_MIN_INTERVAL: Duration = Duration::from_millis(1000);
+
 fn run_tqsdk(
     symbols: Vec<String>,
     interval: String,
@@ -135,22 +137,24 @@ fn run_tqsdk(
             return;
         }
         if let Ok(mut socket) = super::tqsdk::connect_md_socket() {
-            let mut subscribed = true;
-            for (index, symbol) in symbols.iter().enumerate() {
+            // One batched subscription: TqSdk's `set_chart` takes a comma-separated
+            // `ins_list`, so all symbols share a single chart instead of one round
+            // trip (and one socket write) per symbol.
+            let chart_id = "DGV_live_0";
+            let subscribed = {
                 let req = serde_json::json!({
                     "aid": "set_chart",
-                    "chart_id": format!("DGV_live_{index}"),
-                    "ins_list": symbol,
+                    "chart_id": chart_id,
+                    "ins_list": symbols.join(","),
                     "duration": duration_ns,
                     "view_width": 2,
                 });
-                if socket.send_text(&req.to_string()).is_err() {
-                    subscribed = false;
-                    break;
-                }
-            }
-            if subscribed && socket.send_text(r#"{"aid":"peek_message"}"#).is_ok() {
+                socket.send_text(&req.to_string()).is_ok()
+                    && socket.send_text(r#"{"aid":"peek_message"}"#).is_ok()
+            };
+            if subscribed {
                 let mut state = Value::Object(Default::default());
+                let mut last_peek = Instant::now();
                 while !shutdown.load(Ordering::Acquire) {
                     match super::tqsdk::read_and_merge_pack(&mut socket, &mut state) {
                         Ok(true) => {
@@ -174,9 +178,15 @@ fn run_tqsdk(
                             if any {
                                 ctx.request_repaint();
                             }
-                            if socket.send_text(r#"{"aid":"peek_message"}"#).is_err() {
+                            // The server answers each peek with everything queued
+                            // since the previous peek, so polling at most once per
+                            // second loses no data and caps the upstream rate.
+                            if last_peek.elapsed() >= PEEK_MIN_INTERVAL
+                                && socket.send_text(r#"{"aid":"peek_message"}"#).is_err()
+                            {
                                 break;
                             }
+                            last_peek = Instant::now();
                         }
                         Ok(false) => {}
                         Err(_) => break,
@@ -350,3 +360,4 @@ mod tests {
         assert_eq!(kline.close_time, 1_700_000_000_000);
     }
 }
+
